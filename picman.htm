@@ -1,0 +1,88 @@
+<!--Force IE6 into quirks mode with this comment tag-->
+<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Transitional//EN"
+"http://www.w3.org/TR/xhtml1/DTD/xhtml1-transitional.dtd">
+<html xmlns="http://www.w3.org/1999/xhtml" lang="en" xml:lang="en">
+<head>
+<meta http-equiv="Content-Type" content="text/html; charset=iso-8859-1" />
+<title>%s</title>
+
+<style type="text/css">
+
+body{
+background-color: #c0c0c0; 
+color:            black;
+}
+
+#tabi {vertical-align:middle; border:1px solid black; border-collapse: collapse; margin-bottom:6px}
+#tdi  {width:120px; height:120px; overflow_:hidden; vertical-align:middle; border: 1px black solid;}
+#tdc  {overflow:hidden; float_:left; text-align:center; vertical-align:middle; border: 1px black solid; font:normal 0.7em/1.2em verdana,aria,sans-serif;}
+
+/* smart image enlarger starts here */
+/* If your images are not linking to other pages leave the links as <a href="#nogo"> Otherwise enlarger won't work in IE6 */
+
+.th_big {
+	float: left;
+	clear: none; /* set to left or right if needed */
+	padding-bottom: 0px; /* space between thumbs. Don't change this to margin */
+	padding-right:  0px;  /* space between thumbs and wrapping text when there is any text around it */
+}
+
+.th_big a { 
+	display:block;
+	text-decoration: none;
+        cursor:default;
+/* add cursor:default; to this rule to disable the hand cursor */
+}
+
+.th_big a:hover{ /* don't move this positioning to normal state */
+ 	position:relative;
+}
+
+.th_big span img {
+	border: 1px solid #FFFFFF; /* adds a border around the image */
+	margin-bottom: 3px; /* pushes the text down from the image */
+}
+
+.th_big a span {  /* this is for the large image and the caption */
+	position: absolute;
+	display:none;
+	color: #FFCC00; /* caption text colour */
+	text-decoration: none;
+	font-family: Arial, Helvetica, sans-serif;
+	font-size_:    12px; /* caption text size */
+	background-color: #000000;
+	font-weight:   bold;
+	padding-top:   03px;
+	padding-right: 03px;
+	padding-bottom: 0px;
+	padding-left:  03px;
+}
+
+.th_big img { /* leave or IE puts a border around links */
+border-width: 0;
+}
+
+.th_big a:hover span { 
+	display:block;
+top: 20px; /* the pop-up's top  is xx px away from thumb's top  */
+	left: 20px;    /* the pop-up's left is xx px far from the thumb's left */
+	z-index: 100;
+
+/* If you want the pop-up open to the left of thumb, remove the left: 20px; and add  right: 20px;  
+   If you want the pop-up open above the thumb, remove the top: 40px; and add  bottom: 40px; */	
+   add cursor:default; to this rule to disable the hand cursor only for the large image */
+}
+
+.th_small {
+	width:  120px; /* enter desired thumb width here */
+	height: auto;
+}
+
+/* smart image enlarger ends here */
+</style>
+</head>
+<body>
+<h3>%s</h3>
+%s
+</body>
+</html>
