@@ -1,4 +1,8 @@
-usage: picman.py [-h]
+System:         Win7
+Python version: 2.7
+Utilities used: http://www.sentex.net/~mwandel/jhead/
+
+Usage: picman.py [-h]
 
                  (-mv MV | -mvd MVD | -T | -tS | -ts TS | -jn JN | -jnt | -ju | -jun | -jus | -jp)
 
