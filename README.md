@@ -1,14 +1,22 @@
 usage: picman.py [-h]
+
                  (-mv MV | -mvd MVD | -T | -tS | -ts TS | -jn JN | -jnt | -ju | -jun | -jus | -jp)
+
                  [-jg] [-tbg TBG]
+                 
                  path
 
-Notes: (1) Image captions are kept in jpg comment fields or in XPTitle. If jpg
-comment is empty, XPTitle is used. (2) XPTitle can be accessed as
+Notes: 
+
+(1) Image captions are kept in jpg comment fields or in XPTitle. If jpg
+comment is empty, XPTitle is used. 
+
+(2) XPTitle can be accessed as
 Properties/details/Title and in Picasa as Caption, jpg comments - using
 IfranView Image/Information/Comment.
 
 positional arguments:
+
   path        files to process
 
 optional arguments:
