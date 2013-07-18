@@ -1,4 +1,4 @@
-System:         Win7
+OS:             Win7
 
 Python version: 2.7
 
