@@ -1,5 +1,7 @@
 System:         Win7
+
 Python version: 2.7
+
 Utilities used: http://www.sentex.net/~mwandel/jhead/
 
 Usage: picman.py [-h]
