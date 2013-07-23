@@ -599,7 +599,7 @@ group.add_argument('-T',    action="store_true", help="Set file mod time from it
 group.add_argument('-tS',   action="store_true", help="Create square thumbs: size 120,240")
 group.add_argument('-ts',   type=int, help="Create square thumbs with given size")
 group.add_argument('-jn',   type=str, help="Create new descriptors *.dscj.txt")
-group.add_argument('-jnt',  action="store_true", help="Create new descriptors *.dscj.txt from *.dsc.txt")
+group.add_argument('-jnt',  action="store_true", help="Create new descriptor *.dscj.txt from *.dsc.txt")
 group.add_argument('-ju',   action="store_true", help="Update existing descriptors *.dscj.txt")
 group.add_argument('-jun',  action="store_true", help="Recreate descriptors *.dscj.txt, renumber images") 
 group.add_argument('-jus',  action="store_true", help="Update existing descriptors *.dscj.txt, split last group of images") 
