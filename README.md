@@ -39,7 +39,7 @@ optional arguments:
   
   -ts TS      Create square thumbs with given size
   
-  -jn JN      Create new descriptors *.dscj.txt
+  -jn JN      Create new descriptor *.dscj.txt
   
   -jnt        Create new descriptors *.dscj.txt from *.dsc.txt
   
