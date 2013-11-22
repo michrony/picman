@@ -22,17 +22,19 @@
 # Version 06/01/2013: renamed to picman, modified -jn to specify the descriptor name
 # Version 06/04/2013: added image renumbering
 # Version 06/11/2013: thumbs recreated after image renumbering
+# Version 10/25/2013: use Picasa/IPTC captions, abandon XPTitle field
+# Version 10/29/2013: fixed unnecessary warnings for IPTC captions
 
 import sys, os, glob, re, time, json
 import copy, uuid
 import shutil
 import argparse
 import Image
-import pythoncom
-from win32com.shell import shell
-from win32com import storagecon
-
+from   iptcinfo import IPTCInfo
+import warnings
+warnings.filterwarnings('ignore')
 import logging
+logging.basicConfig()
 
 #----------------------------------------------------------------------------------------------------------
 # Prepare thumb by resizing the image and 
@@ -60,64 +62,27 @@ def ThumbC(imgI, Tsize, bgColor):
 
  return
 #----------------------------------------------------------------------------------------------------------
-# Get given Win file/properties/property
-PROPERTIES = {
-  pythoncom.FMTID_SummaryInformation : dict (
-    (getattr (storagecon, d), d) for d in dir (storagecon) if d.startswith ("PIDSI_")
-  )
-}
-STORAGE_READ = storagecon.STGM_READ | storagecon.STGM_SHARE_EXCLUSIVE
-
-#----------------------------------------------------------------------------------------------------------
-def get_fproperty (property, property_set_storage, fmtid):
+# Get Picasa/IPTC Caption for the given file
+def iptcCaption(filepath):
+  logging.disable(logging.CRITICAL)
+  caption = ""
   try:
-    property_storage = property_set_storage.Open (fmtid, STORAGE_READ)
-  except pythoncom.com_error, error:
-    if error.strerror == 'STG_E_FILENOTFOUND':
-      return ""
-    else: raise
-      
-  fproperty = ""
-  for name, property_id, vartype in property_storage:
-    if name is None:
-     name = PROPERTIES.get (fmtid, {}).get (property_id, None)
-    if name!=property: continue
-    try:
-      for value in property_storage.ReadMultiple ([property_id]):
-        if value!="": 
-           fproperty = value
-    #
-    # There are certain values we can't read; they
-    # raise type errors from within the pythoncom
-    # implementation, thumbnail
-    #
-    except TypeError:
-      print "%s reading failure" % name
-  return fproperty
-  
+     info = IPTCInfo(filepath)
+     caption = info.data['caption/abstract']  
+  except: pass
+  if (caption==None): 
+     caption = ""
+     print "IPTC.cation in %s not set properly" % (filepath)
+  caption = caption.strip()
+  return caption
 #----------------------------------------------------------------------------------------------------------
-# Get XPTitle for the given file
-def winfiletitle (filepath):
-  pidl, flags = shell.SHILCreateFromPath (os.path.abspath (filepath), 0)
-  property_set_storage = shell.SHGetDesktopFolder ().BindToStorage (pidl, None, pythoncom.IID_IPropertySetStorage)
-  ftitle = ""
-  for fmtid, clsid, flags, ctime, mtime, atime in property_set_storage:
-    tmp = get_fproperty ("PIDSI_TITLE", property_set_storage, fmtid)
-    if tmp!="": 
-       ftitle = tmp.strip() # get title stripped from whitespace
-       break
-  
-  return ftitle
-#----------------------------------------------------------------------------------------------------------
-# Get comments from XPTitle of jpg files in List
-def GetWinComments(List):
-   Res = {}
-   for el in List:
-       if el.find("_t.")>0: continue
-       Res[el] = winfiletitle(el)
+# Try to get Picasa/IPTC captions for jpg's with empty comments in List
+def checkCaptions(List):
+   for i in range(0, len(List)):
+       if (List[i][1]==""): List[i][1] = iptcCaption(List[i][0])
 
-   #print Res
-   return Res
+   #print List
+   return List
 #----------------------------------------------------------------------------------------------------------
 def getimage(fname):
  if (os.path.exists(fname) or not os.path.exists("./bak/" + fname)): return
@@ -234,10 +199,9 @@ def JsondscFromText(dscname, MaxNPics, getimages, jsplit):
 
  JsonDscProcs(fname, 0, getimages, jsplit) # process new descriptor immediately
 #----------------------------------------------------------------------------------------------------------
-# Get comments from jpg files and their XPTitle's 
-# XPTtitle is used if there is no jpg comment
+# Get comments from jpg files and their IPTC.Caption's 
 # Create json dscritor *.dscj.txt
-def GetJpgComments(descname, List, winTitles, MaxNPics, getimages, jsplit):
+def GetJpgComments(descname, List, MaxNPics, getimages, jsplit):
 
  Res = []
 
@@ -252,15 +216,16 @@ def GetJpgComments(descname, List, winTitles, MaxNPics, getimages, jsplit):
  if len(Res)==0:
     return
 
+ Res = checkCaptions(Res)
+
  # prepare the descriptors 
- #print "=>" + str(Res) + "\n" + str(winTitles)
+ #print "=>" + str(Res)
  Out   = ""
  LOut  = []
  Curr  = []
- #print winTitles
+ #print Captions
  for el in Res:
      #print el
-     if (el[1]=="" and winTitles[el[0]]!=""): el[1] = winTitles[el[0]] # use winTitle to replace empty comments
      fname = el[0]
      el[0] = el[0].replace(".jpg", "_t.jpg")
      if el[1]!="":
@@ -653,8 +618,7 @@ if (len(List)==0 and not jproc and not jnewtext):
 #----------------------------------------------------------------------------------------------------------
 if (jnew!=None):
    print "picman: prepare new json descriptor %s.dscj.txt: %s" % (jnew, Path)
-   Res    = GetWinComments(List)
-   N      = GetJpgComments(jnew, List, Res, jnewMaxNPics, getimages, jsplit)
+   N      = GetJpgComments(jnew, List, jnewMaxNPics, getimages, jsplit)
    print "picman: %d processed images" % N
    print "picman: stop"
    exit(0)
@@ -711,7 +675,7 @@ if (toSetTime):
    setTime(List)
    print "picman: Stop"
    logging.shutdown()
-   os.remove("picman.log")
+   if (os.path.exists("picman.log")): os.remove("picman.log")
    exit(0)
     
 #----------------------------------------------------------------------------------------------------------
@@ -724,7 +688,7 @@ if (len(Tsize)>0):
        if (len(Tsize)>1): ThumbC(imgI, Tsize[1], bgColor)
 
 logging.shutdown()
-os.remove("picman.log")
+if (os.path.exists("picman.log")): os.remove("picman.log")
 
 print "picman: Stop"
 exit(0)
