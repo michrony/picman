@@ -14,12 +14,9 @@ path
 
 <b>Notes:</b> 
 <br>
-(1) Image captions are kept in jpg comment fields or in XPTitle. If jpg
-comment is empty, XPTitle is used. 
+Image captions are kept in jpg comment or IPTC Caption field. If jpg
+comment is empty, IPTC Caption is used. 
 <br>
-(2) XPTitle can be accessed as
-Properties/details/Title and in Picasa as Caption, jpg comments - using
-IfranView Image/Information/Comment.
 
 <b>Positional arguments:</b>
 <br>
