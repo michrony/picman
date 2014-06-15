@@ -24,6 +24,8 @@
 # Version 06/11/2013: thumbs recreated after image renumbering
 # Version 10/25/2013: use Picasa/IPTC captions, abandon XPTitle field
 # Version 10/29/2013: fixed unnecessary warnings for IPTC captions
+# Version 04/22/2014: update get json descriptor
+# Version 06/15/2014: implemented remaing in place (when certain file names don't change)
 
 import sys, os, glob, re, time, json
 import copy, uuid
@@ -328,15 +330,17 @@ def JsondscSplitLastGroup(IN):
 # Get json descriptor from the given file and return the dict
 def JsonDscGet(fname):
 
- p1 = re.compile("<!--dscj[\s]*{")
- p2 = re.compile("}[\s]*-->")
  try:
    F   = open(fname)
-   F_  = F.read()
-   F_  = p1.sub("{", F_) # clean json from its envelope
-   F_  = p2.split(F_)[0].rstrip()
-   if (not F_.endswith("}")): F_ = F_ + "}"
-   IN  = json.loads(F_)
+   # get json descriptor
+   F_  = " " + F.read() + " "
+   # get json descriptor
+   if ("<!--dscj" in F_): 
+      F_  = F_.split("<!--dscj")
+      if ("-->" in F_[1]): F_ = F_[1].split("-->")
+      else:                F_ = F_[1].split("->")
+   else: F_ = [F_]
+   IN  = json.loads(F_[0])
    F.close()
  except:
    print "picman.JsonDscGet: Wrong %s" % fname
@@ -491,27 +495,53 @@ def JsondscRenum(fname):
 # Rename files in List to: prefix[.date].nnn.ext
 def rename(addDate, prefix, List):
 
- N = 0
- for el in List:
-    if (el.lower().endswith("_t.jpg")): 
+ # Prepare new names
+ InPlace = False
+ uid     = str(uuid.uuid4())
+ N       = 0
+ for i in range(len(List)):
+    el = List[i] 
+    if (el.lower().endswith("_t.jpg")): # no thumbs in the list
        os.remove(el)
+       List[i] = ["", ""]
        continue 
+    N = N + 1
     el     = el.replace("\\", "/")
     el_    = el.split("/")
     el_    = el_[0:len(el_)-1]
     el_    = "/".join(el_)
-    if el_!="": el_ = el_ + "/"
+    if (el_!=""): el_ = el_ + "/"
     ext    = el.split(".")
     ext    = ext[len(ext)-1]
-    N      = N+1
     now    = ""
     if addDate:
        nowsec = os.path.getmtime(el)
        now    = "." + time.strftime('%Y.%m.%d', time.localtime(nowsec))
     name   = el_ + "%s%s.%.03d.%s" % (prefix.lower(), now, N, ext.lower())
-    #print "picman.rename: " + el + "=>" + name
+    if (os.path.exists(name)): 
+       InPlace = True
+    List[i] = [el, name]
+
+ if (InPlace): print "picman: renaming in place" 
+ else:         uid = ""
+
+ # Perform renaming
+ for el in List:
+    if (el[0]==""): continue
+    name = uid + el[1]
     if (os.path.exists(name)): os.remove(name) 
-    os.rename(el, name)
+    print "%s=>%s" % (el[0], name)
+    os.rename(el[0], name)
+
+ if (not InPlace): return N
+
+ for el in List:
+    if (el[0]==""): continue
+    name    = el[1] 
+    tmpname = uid + el[1]
+    if (os.path.exists(name)): os.remove(name) 
+    print "%s=>%s" % (tmpname, name)
+    os.rename(tmpname, name)
     name_t  = name[0:len(name)-4] + "_t.jpg"          #remove thumbs
     name__t = name[0:len(name)-4] + "__t.jpg"
     if (os.path.exists(name_t)):  os.remove(name_t)
