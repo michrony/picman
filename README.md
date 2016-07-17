@@ -34,5 +34,5 @@ optional arguments:
   -jg         Try copying image files specified in *.dscj.txt from ./bak to
               this dir
   -pi         Use Picasa-generated index
-</pre>  
   -tbg TBG    Background color code for thumbs. Default is #c0c0c0
+</pre>  
