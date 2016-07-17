@@ -25,7 +25,9 @@
 # Version 10/25/2013: use Picasa/IPTC captions, abandon XPTitle field
 # Version 10/29/2013: fixed unnecessary warnings for IPTC captions
 # Version 04/22/2014: update get json descriptor
-# Version 06/15/2014: implemented remaing in place (when certain file names don't change)
+# Version 06/15/2014: implemented renaming in place (when certain file names don't change)
+# Version 06/06/2015: introduced utf8
+# Version 07/16/2016: introduced processing Picasa-generated index
 
 import sys, os, glob, re, time, json
 import copy, uuid
@@ -37,7 +39,26 @@ import warnings
 warnings.filterwarnings('ignore')
 import logging
 logging.basicConfig()
+from bs4 import BeautifulSoup
 
+# For ActivePython run:
+# pypm install pil
+# pypm install iptc
+# pypm install beautifulsoup4
+
+#----------------------------------------------------------------------------------------------------
+# all symbols after x'80' => HTML encoding $#xxx;
+def utf8(latin1): 
+# http://inamidst.com/stuff/2010/96.py
+# http://www.ascii-code.com/
+      #print "=>"
+      Res = ""
+      for character in latin1: 
+         codepoint = ord(character)
+         if codepoint < 0x80: Res = Res + character
+         else: Res = "%s&#%d;" % (Res, codepoint) 
+
+      return Res
 #----------------------------------------------------------------------------------------------------------
 # Prepare thumb by resizing the image and 
 # placing it in the center of properly colored square
@@ -378,10 +399,10 @@ def JsonDscProcs(fname, MaxNPics, getimages, jsplit):
  fname_norm = INkey + ".dscj.txt"
  try:
     F = open(fname_norm, "w")
-    F.write(Res_norm)
+    F.write(utf8(Res_norm))
     F.close()
- except:
-   print "picman.JsonDscProcs: failed to write %s" % fname_norm
+ except Exception as e:
+   print "picman.JsonDscProcs: failed to write %s - %s" % (fname_norm, e)
     
  # Write .dscj.htm
  fmt       = ""
@@ -399,10 +420,10 @@ def JsonDscProcs(fname, MaxNPics, getimages, jsplit):
  fname_view = INkey + ".dsc.htm"
  try:
     F = open(fname_view, "w")
-    F.write(Res_view)
+    F.write(utf8(Res_view))
     F.close()
- except:
-   print "picman.JsonDscProcs: failed to write %s" % fname_view
+ except Exception as e:
+   print "picman.JsonDscProcs: failed to write %s - %s" % (fname_view, str(e))
 
  print "picman: %s, %s created" %(fname_norm, fname_view)
  return
@@ -435,7 +456,7 @@ def JsondscPutComments(fname):
 
  return
 #----------------------------------------------------------------------------------------------------------------\
-# Renumber the images in fname and reacreate it
+# Renumber the images in fname and recreate it
 def JsondscRenum(fname):
 
  IN = JsonDscGet(fname)
@@ -492,10 +513,52 @@ def JsondscRenum(fname):
 
  return Pics
 #----------------------------------------------------------------------------------------------------------------\
+def procPicasaIndex(fname):
+
+ print "procPicasaIndex: try using Picasa-generated %s" % (fname)
+ L = []
+ if (not os.path.exists(fname)): 
+    print "procPicasaIndex: %s not found" % (fname)
+    return L
+
+ try:
+    F    = open(fname, "r")
+    F_   = F.read()
+    F.close()
+    soup = BeautifulSoup(F_, 'html.parser')
+    L_ = soup.find_all('a')
+    for item in L_:
+        curr = item.img["src"].replace("_", ".").replace("thumbnails/", "")
+        ok   = curr.endswith(".jpg") and not curr in L and os.path.exists(curr)
+        if (not ok): 
+           L = []
+           print "procPicasaIndex: wrong item " + curr
+           break
+        L.append(curr)
+ except Exception, e:
+    L = []
+    print "procPicasaIndex: wrong %s: %s" % (fname, e) 
+
+ if (len(L)==0): print "procPicasaIndex: cannot use %s" % (fname)
+
+ return L
+#----------------------------------------------------------------------------------------------------------------\
 # Rename files in List to: prefix[.date].nnn.ext
 def rename(addDate, prefix, List):
 
+ fname = ""
+ if (".htm" in List[0]): fname = List[0] 
+ if (fname!=""):  
+    List = procPicasaIndex(fname)
+ if (fname!="" and len(List)>0):
+    print "rename(): use %s, %d items" % (fname, len(List))
+
+ if (len(List)==0):
+    print "rename(): nothing to process"
+    return 0
+
  # Prepare new names
+ print "rename(): %d items to process" % (len(List))
  InPlace = False
  uid     = str(uuid.uuid4())
  N       = 0
@@ -522,25 +585,27 @@ def rename(addDate, prefix, List):
        InPlace = True
     List[i] = [el, name]
 
- if (InPlace): print "picman: renaming in place" 
- else:         uid = ""
-
- # Perform renaming
+ if (InPlace): print "rename(): in place - stage 1" 
+ else:         
+    uid = ""
+    print "rename(): do it" 
+    
  for el in List:
     if (el[0]==""): continue
     name = uid + el[1]
     if (os.path.exists(name)): os.remove(name) 
-    print "%s=>%s" % (el[0], name)
+    print "rename(): %s=>%s" % (el[0], name)
     os.rename(el[0], name)
 
  if (not InPlace): return N
 
+ print "rename(): in place - stage 2"
  for el in List:
     if (el[0]==""): continue
     name    = el[1] 
     tmpname = uid + el[1]
     if (os.path.exists(name)): os.remove(name) 
-    print "%s=>%s" % (tmpname, name)
+    print "rename(): %s=>%s" % (tmpname, name)
     os.rename(tmpname, name)
     name_t  = name[0:len(name)-4] + "_t.jpg"          #remove thumbs
     name__t = name[0:len(name)-4] + "__t.jpg"
@@ -600,14 +665,16 @@ group.add_argument('-jun',  action="store_true", help="Recreate descriptors *.ds
 group.add_argument('-jus',  action="store_true", help="Update existing descriptors *.dscj.txt, split last group of images") 
 group.add_argument('-jp',   action="store_true", help="Put comments from the given *.dscj.txt to jpg's")
 parser.add_argument('-jg',  action="store_true", help="Try copying image files specified in *.dscj.txt from ./bak to this dir") 
+parser.add_argument('-pi',  action="store_true", help="Use Picasa-generated index") 
 parser.add_argument("-tbg", type = str, help="Background color code for thumbs. Default is #c0c0c0")
 parser.add_argument("path", type = str, help="files to process")
 args = vars(parser.parse_args())
 
 Path      = args["path"]
 toSetTime = args["T"]
+
 Rename    = ""
-addDate   = args["mvd"]!=None
+addDate   = args["mvd"]!=None 
 if (addDate): Rename = args["mvd"]
 if (args["mv"]!=None): Rename = args["mv"]
 
@@ -625,6 +692,7 @@ if (args["tbg"]!=None):
       print "picman: Wrong tbg %s assumed %s" % (args["tbg"], bgColor)
 if (args["tbg"]!=None): bgcolor = args["tbg"]
 
+pi        = args["pi"]
 getimages = args["jg"]
 jnew      = args["jn"]
 jnewtext  = args["jnt"]
@@ -635,7 +703,10 @@ jsplit    = args["jus"]
 jnewMaxNPics = 6
 
 List = glob.glob(Path)
-List = [el for el in List if (el.lower().endswith(".jpg"))] # use only jpg files
+if (pi>0):
+   List = [el for el in List if ("index.htm" in el.lower())]
+else: 
+   List = [el for el in List if (el.lower().endswith(".jpg"))] # use only jpg files
 List.sort()
 #print "Rename=" + Rename
 #print "Path=" + Path
