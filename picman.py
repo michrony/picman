@@ -15,7 +15,7 @@
 # Version 12/31/2012: only centered thumbs are prepared 
 # Version 01/03/2013: use PIL to extract jpg comments and DateTimeOriginal; added -bg option 
 # Version 01/10/2013: fixed PIL/EXIF processing exceptions 
-# Version 01/25/2013: added processing json descriptors *.dscj.txt
+# Version 01/25/2013: added processing of json descriptors *.dscj.txt
 # Version 02/06/2013: new/updated *.dscj.txt descriptor is always regrouped
 # Version 02/20/2013: enabled argparse, removed obsolete options
 # Version 03/24/2013: introduced JsondscSplitLastGroup
@@ -27,24 +27,34 @@
 # Version 04/22/2014: update get json descriptor
 # Version 06/15/2014: implemented renaming in place (when certain file names don't change)
 # Version 06/06/2015: introduced utf8
-# Version 07/16/2016: introduced processing Picasa-generated index
+# Version 07/16/2016: introduced processing of Picasa-generated index
+# Version 07/23/2016: instead of old JsondscSplitLastGroup logic, empty captions are made " ". 
+#                     Now -jun produces the correct image groups
+#                     Enable full Picasa processing of IPTC captions 
+# Version 09/05/2016: rename modified to order dated images properly
+# Version 06/19/2017: added notes processing
 
 import sys, os, glob, re, time, json
 import copy, uuid
 import shutil
 import argparse
-import Image
+from   PIL import Image
+from   time import sleep
+from   datetime import datetime
 from   iptcinfo import IPTCInfo
+from   bs4 import BeautifulSoup
 import warnings
 warnings.filterwarnings('ignore')
 import logging
 logging.basicConfig()
-from bs4 import BeautifulSoup
+import pprint
+import validators
 
-# For ActivePython run:
-# pypm install pil
-# pypm install iptc
+# For Win ActivePython run:
+# easy_install Pillow
+# pypm install iptcinfo
 # pypm install beautifulsoup4
+# pip install validators
 
 #----------------------------------------------------------------------------------------------------
 # all symbols after x'80' => HTML encoding $#xxx;
@@ -85,32 +95,64 @@ def ThumbC(imgI, Tsize, bgColor):
 
  return
 #----------------------------------------------------------------------------------------------------------
-# Get Picasa/IPTC Caption for the given file
-def iptcCaption(filepath):
+# Put Picasa/IPTC caption to the given file
+def iptcCaptionSet(fn, caption):
   logging.disable(logging.CRITICAL)
-  caption = ""
+  if (caption==""): caption = " "
+  now = datetime.now()
+  now = now.strftime("%Y%m%d")
+  info = None
   try:
-     info = IPTCInfo(filepath)
+     n = 1
+     info = IPTCInfo(fn, force=True)
+     n = 2
+     info.data['caption/abstract'] = caption
+     info.data['date created']     = now
+     info.data['writer/editor']    = "picman"
+     info.data['copyright notice'] = ""
+     #info.data['keywords']  = ""
+     n = 3
+     info.save()
+  except Exception, e:
+    info  = None
+    print "[%s]" % (caption)
+    print "iptcCaptionSet() failed to process %s - %d %s" % (fn, n, str(e))
+  return
+#----------------------------------------------------------------------------------------------------------
+# Get Picasa/IPTC caption from the given file
+def iptcCaptionGet(fn):
+  logging.disable(logging.CRITICAL)
+  caption = None
+  info    = None
+  try:
+     info = IPTCInfo(fn, force=True)
      caption = info.data['caption/abstract']  
-  except: pass
-  if (caption==None): 
-     caption = ""
-     print "IPTC.cation in %s not set properly" % (filepath)
+  except Exception, e:
+    info = None
+    print "iptcCaptionGet() failed to open IPTC in %s - %s" % (fn, str(e))
+  if (caption==None or caption==""): caption = ""
   caption = caption.strip()
+  if (caption==""): caption = " " # return blank instead of empty
+  #print "===>%s/%s" %(fn, caption)
   return caption
 #----------------------------------------------------------------------------------------------------------
 # Try to get Picasa/IPTC captions for jpg's with empty comments in List
 def checkCaptions(List):
    for i in range(0, len(List)):
-       if (List[i][1]==""): List[i][1] = iptcCaption(List[i][0])
-
+       iptc = iptcCaptionGet(List[i][0])
+       curr = List[i][1]
+       # if (curr==""): curr = iptc  # use IPTC only if nothing was found in jpg comment 
+       if (iptc!=" "): curr = iptc   # if there is IPTC data, use it
+       if (curr==""): curr = " " # return blank instead of empty
+       List[i][1] = curr
+     
    #print List
    return List
 #----------------------------------------------------------------------------------------------------------
 def getimage(fname):
  if (os.path.exists(fname) or not os.path.exists("./bak/" + fname)): return
  shutil.copy2("./bak/" + fname, "./")
- print  "picman.getimage: %s copied" % (fname)
+ print  "getimage(): %s copied" % (fname)
  return
 #----------------------------------------------------------------------------------------------------------
 # Regroup L: 
@@ -166,11 +208,11 @@ def JsondscRegroup(L, MaxNPics):
     LOut.append(Out)
 
  NEmpty = MaxLen*len(LOut)-NPics
- print "picman.JsondscRegroup: MaxNPics=%s MaxLen=%s NEmpty=%s" % (MaxNPics, MaxLen, NEmpty)
+ print "JsondscRegroup(): MaxNPics=%s MaxLen=%s NEmpty=%s" % (MaxNPics, MaxLen, NEmpty)
 
  return [LOut, NEmpty] 
 #----------------------------------------------------------------------------------------------------------
-# Choose regouping with minimal NEmpty
+# Choose regrouping with minimal NEmpty
 def JsondscRegroupMin(Rows, MaxNPics):
  NEmpty = 1000
  LOut   = []
@@ -184,14 +226,14 @@ def JsondscRegroupMin(Rows, MaxNPics):
 #----------------------------------------------------------------------------------------------------------
 # *.dsc.txt => *.dscj.txt
 # Use when JSON descriptor is not available
-def JsondscFromText(dscname, MaxNPics, getimages, jsplit):
+def JsondscFromText(dscname, MaxNPics, getimages):
  if (not dscname.endswith(".dsc.txt")): 
     print "picman.JsondscFromText: wrong %s" % (dscname)
     return
  F = open(dscname)
  try:    L = F.readlines()
  except: 
-         print "picman.JsondscFromText: cannot read %s" % (dscname)
+         print "JsondscFromText(): failed to read %s" % (dscname)
          return
  
  # ASCII descriptor => list of comment-pics rows 
@@ -220,11 +262,11 @@ def JsondscFromText(dscname, MaxNPics, getimages, jsplit):
  fname = dscname.replace(".dsc.txt", ".dscj.txt")
  json.dump(Out, open(fname, "w"), indent=1, sort_keys=True)
 
- JsonDscProcs(fname, 0, getimages, jsplit) # process new descriptor immediately
+ JsonDscProcs(fname, 0, getimages) # process new descriptor immediately
 #----------------------------------------------------------------------------------------------------------
 # Get comments from jpg files and their IPTC.Caption's 
 # Create json dscritor *.dscj.txt
-def GetJpgComments(descname, List, MaxNPics, getimages, jsplit):
+def GetJpgComments(descname, List, MaxNPics, getimages):
 
  Res = []
 
@@ -260,7 +302,7 @@ def GetJpgComments(descname, List, MaxNPics, getimages, jsplit):
         except:
              Out = Out + "\n : http://images/" + el[0]
              Curr = [el[1], fname]
-             print "Wrong symbol in %s comment" % (fname)
+             print "GetJpgComments(): Wrong symbol in %s comment" % (fname)
      else: 
         Out = Out + " http://images/" + el[0]
         Curr.append(fname)
@@ -272,10 +314,11 @@ def GetJpgComments(descname, List, MaxNPics, getimages, jsplit):
 
  # Prepare the descriptors
  LOut = {descname : LOut1}
+ LOut["notes"] = [["", ""], ["", ""]]
  
  json.dump(LOut, open(descname + ".dscj.txt", "w"), indent=1, sort_keys=True)
 
- JsonDscProcs(descname + ".dscj.txt", 0, getimages, jsplit) # process new descriptor immediately
+ JsonDscProcs(descname + ".dscj.txt", 0, getimages) # process new descriptor immediately
 
  return len(Res)
 #----------------------------------------------------------------------------------------------------------------\
@@ -332,22 +375,6 @@ def JsonRowProcs(row, getimages):
 
  return [Res_norm, Res_view]
 #----------------------------------------------------------------------------------------------------------------\
-# Take the last comment-item group and insert blank comments for its images
-# starting from the tail - until the commented image is found
-def JsondscSplitLastGroup(IN):
- Last = copy.deepcopy(IN[len(IN)-1])
- rLast = range(0, len(Last))
- rLast.reverse()
- for n in rLast:
-   if (not Last[n].lower().endswith(".jpg")): break
-   if (n>0 and not Last[n-1].lower().endswith(".jpg")): break
-   Last.insert(n, "")
- #print json.dumps(Last, indent=1, sort_keys=True)
-
- IN[len(IN)-1] = copy.deepcopy(Last)
-
- return IN
-#----------------------------------------------------------------------------------------------------------------\
 # Get json descriptor from the given file and return the dict
 def JsonDscGet(fname):
 
@@ -363,27 +390,31 @@ def JsonDscGet(fname):
    else: F_ = [F_]
    IN  = json.loads(F_[0])
    F.close()
- except:
-   print "picman.JsonDscGet: Wrong %s" % fname
+ except Exception as e:
+   print "JsonDscGet(): Wrong %s - %s" % (fname, str(e))
    return {}
  
- if (len(IN.keys())!=1):
-   print "picman.JsonDscGet: Wrong %s" % fname
-   return {}
-
  return IN
 #----------------------------------------------------------------------------------------------------------------\
 # Update *.dscj.txt to include HTML tables
 # Create *.dscj.htm to view the images in the current directory
-def JsonDscProcs(fname, MaxNPics, getimages, jsplit):
+def JsonDscProcs(fname, MaxNPics, getimages):
 
  IN = JsonDscGet(fname)
- if (len(IN.keys())!=1): return # wrong descriptor
+ if (IN=={}): return
+ 
+ NOTES = []
+ if ("notes" in IN):
+    NOTES = IN["notes"]
+    del IN["notes"]
+ 
+ if (len(IN.keys())!=1): 
+    print "JsonDscProcs(): Wrong #keys in %s" % (fname)
+    return 
 
  INkey = IN.keys()[0]
  IN1 = IN[INkey]
  if (MaxNPics>0):             
-   if (jsplit): IN1 = JsondscSplitLastGroup(IN1)
    IN1 = JsondscRegroupMin(IN1, MaxNPics)
 
  Res_norm  = ""
@@ -392,17 +423,24 @@ def JsonDscProcs(fname, MaxNPics, getimages, jsplit):
    [norm, view] = JsonRowProcs(row, getimages)
    Res_norm = Res_norm + norm
    Res_view = Res_view + view
-
+ 
+ Res_notes = NotesProcs(NOTES)
+   
  # Write .dscj.txt
  IN1 = {INkey: IN1}
+ if (len(NOTES)>0):
+    IN1["notes"] = NOTES
+    
  Res_norm = "<!--%s\n%s\n-->\n%s" % ("dscj", json.dumps(IN1, indent=1, sort_keys=True), Res_norm)
+ Res_norm = Res_notes.replace("<br>", "") + Res_norm
+ 
  fname_norm = INkey + ".dscj.txt"
  try:
     F = open(fname_norm, "w")
     F.write(utf8(Res_norm))
     F.close()
  except Exception as e:
-   print "picman.JsonDscProcs: failed to write %s - %s" % (fname_norm, e)
+   print "JsonDscProcs(): failed to write %s - %s" % (fname_norm, e)
     
  # Write .dscj.htm
  fmt       = ""
@@ -413,8 +451,10 @@ def JsonDscProcs(fname, MaxNPics, getimages, jsplit):
    fmt = F.read()
    F.close()
  except:
-   print "picman.JsonDscProcs: failed to read %s"
+   print "JsonDscProcs(): failed to read " + fmtfile
+   return
 
+ Res_view = Res_notes + Res_view
  Res_view = "<!--%s\n%s\n-->\n%s" % ("dscj", json.dumps(IN, indent=1, sort_keys=True), Res_view)
  if (fmt!=""): Res_view = fmt % (INkey, INkey, Res_view)
  fname_view = INkey + ".dsc.htm"
@@ -423,36 +463,85 @@ def JsonDscProcs(fname, MaxNPics, getimages, jsplit):
     F.write(utf8(Res_view))
     F.close()
  except Exception as e:
-   print "picman.JsonDscProcs: failed to write %s - %s" % (fname_view, str(e))
-
- print "picman: %s, %s created" %(fname_norm, fname_view)
+   print "JsonDscProcs(): failed to write %s - %s" % (fname_view, str(e))
+   return
+   
+ print "JsonDscProcs(): %s, %s created" %(fname_norm, fname_view)
  return
-#----------------------------------------------------------------------------------------------------------------\
+#----------------------------------------------------------------------------------------------------------------
+# Check and process the notes pairs
+def NotesProcs(IN):
+
+ # Check that this is a list of [string, string] pairs
+ if (not IN.__class__.__name__=="list"):
+        print "NotesProcs(): Wrong notes in %s" % (el)
+        pprint.pprint(In[el])
+        return ""
+ 
+ for el in IN:
+        if (not el.__class__.__name__=="list"):
+           print "NotesProcs(): Wrong note %s" % (el)
+           pprint.pprint(el_)
+           return ""
+        if (not len(el)==2):
+           print "NotesProcs(): Wrong note %s" % (el)
+           pprint.pprint(el)
+           return ""
+        if (el[0].__class__.__name__!="str" or el[1].__class__.__name__!="str"):
+           print "NotesProcs(): Wrong note (%s, %s) in %s" % (el[0].__class__.__name__, el[1].__class__.__name__, el)
+           pprint.pprint(el)
+           return ""
+        if (not el[1]=="" and not validators.url(el[1])):
+           print "NotesProcs(): Wrong note [%s, %s]" % (el[0], el[1])
+           return ""
+  
+ res = ""
+ for el in IN:
+        if (el[0]=="" and el[1]==""): continue
+        if (el[0]==""):
+           res = res + el[1] + "<br>\n"
+           continue
+        if (el[1]==""):
+           res = res + el[0] + "<br>\n"
+           continue
+        res = res + el[0] + ": " + el[1] + "<br>\n"
+ 
+ #print "NotesProcs(): res=" + res;
+ print "NotesProcs(): %d notes processed" % (len(IN))
+ return res
+#----------------------------------------------------------------------------------------------------------------
 # Put comments into jpg's for this JSON descriptor
 def JsondscPutComments(fname):
 
- IN = JsonDscGet(fname)
- if (len(IN.keys())!=1): return # wrong descriptor
+ IN     = JsonDscGet(fname)
+ INkeys = IN.keys()
+ if ("notes" in INkeys): 
+    INkeys.remove("notes")
+ if (len(INkeys)!=1): 
+    print "JsondscPutComments(): wrong keys in desc"
+    pprint.pprint(INkeys)
+    return 
 
- INkey = IN.keys()[0]
- IN    = IN[INkey]
+ INkey  = INkeys[0]
+ IN     = IN[INkey]
 
  N = 0
- comment = ""
+ comment = "   "
  for row in IN:
-   for el in row:
-     if (not el.endswith(".jpg")):
-       comment = el
+   for fn in row:
+     if (not fn.endswith(".jpg")):
+       comment = fn
        continue
-     if not os.path.exists(el):
-       print "picman: stop %s not found" % (el)
+     if not os.path.exists(fn):
+       print "JsondscPutComments(): stop - %s not found" % (fn)
        return
-     cmd = "jhead -cl \"%s\" %s" % (comment, el)
+     cmd = "jhead -cl \"%s\" %s" % (comment, fn)
      os.popen(cmd)
+     iptcCaptionSet(fn, comment)
      N   = N + 1
-     comment = ""
+     comment = "   "
 
- print "picman: %s images processed" % (N)
+ print "JsondscPutComments(): %s images processed" % (N)
 
  return
 #----------------------------------------------------------------------------------------------------------------\
@@ -479,7 +568,7 @@ def JsondscRenum(fname):
             if (os.path.exists(el__t)): os.remove(el__t)
 
  if (len(Wrong)>0): 
-    print "picman.JsondscRenum failed. The following files do not exist: %s" % (str(Wrong))
+    print "JsondscRenum() failed. The following files do not exist: %s" % (str(Wrong))
     return []
 
  # renumber the files 
@@ -509,16 +598,16 @@ def JsondscRenum(fname):
        os.remove("%s.%03d.jpg" % (INkey, N))
        N = N + 1
  
- print "picman.JsondscRenum: %s images processed. %s extra images removed" % (len(Pics), N-len(Pics)-1)
+ print "JsondscRenum(): %s images processed. %s extra images removed" % (len(Pics), N-len(Pics)-1)
 
  return Pics
 #----------------------------------------------------------------------------------------------------------------\
 def procPicasaIndex(fname):
 
- print "procPicasaIndex: try using Picasa-generated %s" % (fname)
+ print "procPicasaIndex(): try using Picasa-generated %s" % (fname)
  L = []
  if (not os.path.exists(fname)): 
-    print "procPicasaIndex: %s not found" % (fname)
+    print "procPicasaIndex(): %s not found" % (fname)
     return L
 
  try:
@@ -532,18 +621,18 @@ def procPicasaIndex(fname):
         ok   = curr.endswith(".jpg") and not curr in L and os.path.exists(curr)
         if (not ok): 
            L = []
-           print "procPicasaIndex: wrong item " + curr
+           print "procPicasaIndex(): wrong item " + curr
            break
         L.append(curr)
  except Exception, e:
     L = []
-    print "procPicasaIndex: wrong %s: %s" % (fname, e) 
+    print "procPicasaIndex(): wrong %s: %s" % (fname, str(e)) 
 
- if (len(L)==0): print "procPicasaIndex: cannot use %s" % (fname)
+ if (len(L)==0): print "procPicasaIndex(): cannot use %s" % (fname)
 
  return L
 #----------------------------------------------------------------------------------------------------------------\
-# Rename files in List to: prefix[.date].nnn.ext
+# Rename files in List to: prefix.nnn[.date].ext
 def rename(addDate, prefix, List):
 
  fname = ""
@@ -560,7 +649,7 @@ def rename(addDate, prefix, List):
  # Prepare new names
  print "rename(): %d items to process" % (len(List))
  InPlace = False
- uid     = str(uuid.uuid4())
+ uid     = str(uuid.uuid4()).split("-")[0] + "."
  N       = 0
  for i in range(len(List)):
     el = List[i] 
@@ -580,7 +669,7 @@ def rename(addDate, prefix, List):
     if addDate:
        nowsec = os.path.getmtime(el)
        now    = "." + time.strftime('%Y.%m.%d', time.localtime(nowsec))
-    name   = el_ + "%s%s.%.03d.%s" % (prefix.lower(), now, N, ext.lower())
+    name   = el_ + "%s.%.03d%s.%s" % (prefix.lower(), N, now, ext.lower())
     if (os.path.exists(name)): 
        InPlace = True
     List[i] = [el, name]
@@ -605,8 +694,20 @@ def rename(addDate, prefix, List):
     name    = el[1] 
     tmpname = uid + el[1]
     if (os.path.exists(name)): os.remove(name) 
+    
     print "rename(): %s=>%s" % (tmpname, name)
-    os.rename(tmpname, name)
+    tryMore = False
+    try: 
+       os.rename(tmpname, name)
+    except:
+       tryMore = True
+    if (tryMore):
+       sleep(0.5)
+       try: 
+          os.rename(tmpname, name)
+       except:   
+          print "rename(): %s=>%s failed 2 times" % (tmpname, name)
+          
     name_t  = name[0:len(name)-4] + "_t.jpg"          #remove thumbs
     name__t = name[0:len(name)-4] + "__t.jpg"
     if (os.path.exists(name_t)):  os.remove(name_t)
@@ -646,10 +747,9 @@ def setTime(List):
 
 notes = '''
 Notes:
-(1) Image captions are kept in jpg comment fields or in XPTitle. 
-   If jpg comment is empty, XPTitle is used.
-(2) XPTitle can be accessed as Properties/details/Title and in Picasa as Caption, 
-   jpg comments - using IfranView Image/Information/Comment.'''
+(1) Image captions are kept in jpg comment fields or in IPTC. 
+   If IPTC is empty, jpg comment is used.
+'''
 
 parser = argparse.ArgumentParser(description=notes)
 group  = parser.add_mutually_exclusive_group(required=True)
@@ -662,7 +762,6 @@ group.add_argument('-jn',   type=str, help="Create new descriptors *.dscj.txt")
 group.add_argument('-jnt',  action="store_true", help="Create new descriptor *.dscj.txt from *.dsc.txt")
 group.add_argument('-ju',   action="store_true", help="Update existing descriptors *.dscj.txt")
 group.add_argument('-jun',  action="store_true", help="Recreate descriptors *.dscj.txt, renumber images") 
-group.add_argument('-jus',  action="store_true", help="Update existing descriptors *.dscj.txt, split last group of images") 
 group.add_argument('-jp',   action="store_true", help="Put comments from the given *.dscj.txt to jpg's")
 parser.add_argument('-jg',  action="store_true", help="Try copying image files specified in *.dscj.txt from ./bak to this dir") 
 parser.add_argument('-pi',  action="store_true", help="Use Picasa-generated index") 
@@ -697,9 +796,8 @@ getimages = args["jg"]
 jnew      = args["jn"]
 jnewtext  = args["jnt"]
 jnum      = args["jun"]
-jproc     = args["ju"] or args["jnt"] or args["jus"]
+jproc     = args["ju"] or args["jnt"]
 jprocput  = args["jp"]
-jsplit    = args["jus"]
 jnewMaxNPics = 6
 
 List = glob.glob(Path)
@@ -719,7 +817,7 @@ if (len(List)==0 and not jproc and not jnewtext):
 #----------------------------------------------------------------------------------------------------------
 if (jnew!=None):
    print "picman: prepare new json descriptor %s.dscj.txt: %s" % (jnew, Path)
-   N      = GetJpgComments(jnew, List, jnewMaxNPics, getimages, jsplit)
+   N      = GetJpgComments(jnew, List, jnewMaxNPics, getimages)
    print "picman: %d processed images" % N
    print "picman: stop"
    exit(0)
@@ -734,7 +832,7 @@ if (jnewtext):
           break  
    if (fname!=""): 
       print "picman: prepare new json descriptor from: " + fname
-      JsondscFromText(fname, jnewMaxNPics, getimages, jsplit)
+      JsondscFromText(fname, jnewMaxNPics, getimages)
    print "picman: stop"
    exit(0)
 
@@ -751,7 +849,7 @@ if (jproc or jprocput or jnum):
                  jproc = True       # create new desc
            if (jproc):
               print "picman: prepare json descriptor " + el
-              JsonDscProcs(el, jnewMaxNPics, getimages, jsplit)
+              JsonDscProcs(el, jnewMaxNPics, getimages)
            if (jprocput): 
               print "picman: %s put comments to images " % (el)
               JsondscPutComments(el) 
