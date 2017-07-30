@@ -33,6 +33,9 @@
 #                     Enable full Picasa processing of IPTC captions 
 # Version 09/05/2016: rename modified to order dated images properly
 # Version 06/19/2017: added notes processing
+# Version 07/09/2017: added -mvd nand to get rid of non-alphanum characters in file names
+# Version 07/31/2017: added -jue. Now only -jue produces envelope around json desc in *.dscj.txt
+#                     To simplify corecting JSON syntax, -jn, -ju, -jun produce pure JSON in *.dscj.txt
 
 import sys, os, glob, re, time, json
 import copy, uuid
@@ -113,6 +116,7 @@ def iptcCaptionSet(fn, caption):
      #info.data['keywords']  = ""
      n = 3
      info.save()
+     os.remove(fn+"~")
   except Exception, e:
     info  = None
     print "[%s]" % (caption)
@@ -257,12 +261,12 @@ def JsondscFromText(dscname, MaxNPics, getimages):
  #print Rows 
  LOut = JsondscRegroupMin(Rows, MaxNPics)
 
- # Prepare the JSON dscrptor file 
+ # Prepare the JSON descrptor file 
  Out   = {dscname.replace(".dsc.txt", ""): LOut}
  fname = dscname.replace(".dsc.txt", ".dscj.txt")
  json.dump(Out, open(fname, "w"), indent=1, sort_keys=True)
 
- JsonDscProcs(fname, 0, getimages) # process new descriptor immediately
+ JsonDscProcs(fname, 0, getimages, None) # process new descriptor immediately
 #----------------------------------------------------------------------------------------------------------
 # Get comments from jpg files and their IPTC.Caption's 
 # Create json dscritor *.dscj.txt
@@ -318,7 +322,7 @@ def GetJpgComments(descname, List, MaxNPics, getimages):
  
  json.dump(LOut, open(descname + ".dscj.txt", "w"), indent=1, sort_keys=True)
 
- JsonDscProcs(descname + ".dscj.txt", 0, getimages) # process new descriptor immediately
+ JsonDscProcs(descname + ".dscj.txt", 0, getimages, None) # process new descriptor immediately
 
  return len(Res)
 #----------------------------------------------------------------------------------------------------------------\
@@ -398,7 +402,7 @@ def JsonDscGet(fname):
 #----------------------------------------------------------------------------------------------------------------\
 # Update *.dscj.txt to include HTML tables
 # Create *.dscj.htm to view the images in the current directory
-def JsonDscProcs(fname, MaxNPics, getimages):
+def JsonDscProcs(fname, MaxNPics, getimages, env):
 
  IN = JsonDscGet(fname)
  if (IN=={}): return
@@ -430,10 +434,15 @@ def JsonDscProcs(fname, MaxNPics, getimages):
  IN1 = {INkey: IN1}
  if (len(NOTES)>0):
     IN1["notes"] = NOTES
+
+ print "JsonDscProcs(): env=" + str(env)
+ jdump    = json.dumps(IN1, indent=1, sort_keys=True)
+ if (env): 
+    Res_norm = "<!--%s\n%s\n-->\n%s" % ("dscj", jdump, Res_norm)
+    Res_norm = Res_notes.replace("<br>", "") + Res_norm
+ else: 
+    Res_norm = jdump
     
- Res_norm = "<!--%s\n%s\n-->\n%s" % ("dscj", json.dumps(IN1, indent=1, sort_keys=True), Res_norm)
- Res_norm = Res_notes.replace("<br>", "") + Res_norm
- 
  fname_norm = INkey + ".dscj.txt"
  try:
     F = open(fname_norm, "w")
@@ -449,7 +458,7 @@ def JsonDscProcs(fname, MaxNPics, getimages):
  try:
    F   = open(fmtfile)
    fmt = F.read()
-   F.close()
+   F.close() 
  except:
    print "JsonDscProcs(): failed to read " + fmtfile
    return
@@ -549,7 +558,14 @@ def JsondscPutComments(fname):
 def JsondscRenum(fname):
 
  IN = JsonDscGet(fname)
- if (len(IN.keys())!=1): return # wrong descriptor
+ NOTES = []
+ if ("notes" in IN):
+    NOTES = IN["notes"]
+    del IN["notes"]
+    
+ if (len(IN.keys())!=1): 
+    print "JsonDscGet(%s): wrong descriptor len=%d" % (fname, len(IN.keys()))
+    return []
 
  INkey = IN.keys()[0]
  IN    = IN[INkey]
@@ -589,7 +605,8 @@ def JsondscRenum(fname):
 
  OUT = {}
  OUT[INkey] = [RES] 
- #print OUT
+ if (len(NOTES)>0):
+     OUT["notes"] = NOTES
  json.dump(OUT, open(fname, "w"), indent=1, sort_keys=True)
 
  # remove extra images if any
@@ -633,8 +650,9 @@ def procPicasaIndex(fname):
  return L
 #----------------------------------------------------------------------------------------------------------------\
 # Rename files in List to: prefix.nnn[.date].ext
+# For prefix = nand: replace non-alphanum characters by dots.
 def rename(addDate, prefix, List):
-
+ 
  fname = ""
  if (".htm" in List[0]): fname = List[0] 
  if (fname!=""):  
@@ -651,13 +669,12 @@ def rename(addDate, prefix, List):
  InPlace = False
  uid     = str(uuid.uuid4()).split("-")[0] + "."
  N       = 0
- for i in range(len(List)):
-    el = List[i] 
+ List_   = []
+ for el in List:
     if (el.lower().endswith("_t.jpg")): # no thumbs in the list
        os.remove(el)
-       List[i] = ["", ""]
        continue 
-    N = N + 1
+    N      = N + 1
     el     = el.replace("\\", "/")
     el_    = el.split("/")
     el_    = el_[0:len(el_)-1]
@@ -665,22 +682,27 @@ def rename(addDate, prefix, List):
     if (el_!=""): el_ = el_ + "/"
     ext    = el.split(".")
     ext    = ext[len(ext)-1]
+    
     now    = ""
     if addDate:
        nowsec = os.path.getmtime(el)
        now    = "." + time.strftime('%Y.%m.%d', time.localtime(nowsec))
-    name   = el_ + "%s.%.03d%s.%s" % (prefix.lower(), N, now, ext.lower())
-    if (os.path.exists(name)): 
+       
+    if (prefix!="nand"): name = el_ + "%s.%.03d%s.%s" % (prefix.lower(), N, now, ext.lower())
+    else:                name = re.sub('[^a-zA-Z0-9]', '.', el)
+    #print "=>%s: %s*%s" % (prefix, name, el)
+        
+    if (name!=el and os.path.exists(name)): 
        InPlace = True
-    List[i] = [el, name]
+    if (name!=el):     
+       List_.append([el, name])
 
  if (InPlace): print "rename(): in place - stage 1" 
  else:         
     uid = ""
     print "rename(): do it" 
-    
+ List = List_   
  for el in List:
-    if (el[0]==""): continue
     name = uid + el[1]
     if (os.path.exists(name)): os.remove(name) 
     print "rename(): %s=>%s" % (el[0], name)
@@ -702,7 +724,7 @@ def rename(addDate, prefix, List):
     except:
        tryMore = True
     if (tryMore):
-       sleep(0.5)
+       sleep(0.75)
        try: 
           os.rename(tmpname, name)
        except:   
@@ -753,14 +775,15 @@ Notes:
 
 parser = argparse.ArgumentParser(description=notes)
 group  = parser.add_mutually_exclusive_group(required=True)
-group.add_argument('-mv',   help="Rename files to prefix.nnn.ext")
-group.add_argument('-mvd',  help="Rename files to prefix.date.nnn.ext")
+group.add_argument('-mv',   help="Rename *.jpg files to prefix.nnn.ext; for -mv nand replace non-alphanum charcters by dots ")
+group.add_argument('-mvd',  help="Rename files to prefix.nnn.date.ext")
 group.add_argument('-T',    action="store_true", help="Set file mod time from its EXIF info or creation time if no EXIF")
 group.add_argument('-tS',   action="store_true", help="Create square thumbs: size 120,240")
 group.add_argument('-ts',   type=int, help="Create square thumbs with given size")
 group.add_argument('-jn',   type=str, help="Create new descriptors *.dscj.txt")
 group.add_argument('-jnt',  action="store_true", help="Create new descriptor *.dscj.txt from *.dsc.txt")
 group.add_argument('-ju',   action="store_true", help="Update existing descriptors *.dscj.txt")
+group.add_argument('-jue',  action="store_true", help="Same as -ju plus create envelope around json in *.dscj.txt")
 group.add_argument('-jun',  action="store_true", help="Recreate descriptors *.dscj.txt, renumber images") 
 group.add_argument('-jp',   action="store_true", help="Put comments from the given *.dscj.txt to jpg's")
 parser.add_argument('-jg',  action="store_true", help="Try copying image files specified in *.dscj.txt from ./bak to this dir") 
@@ -791,13 +814,15 @@ if (args["tbg"]!=None):
       print "picman: Wrong tbg %s assumed %s" % (args["tbg"], bgColor)
 if (args["tbg"]!=None): bgcolor = args["tbg"]
 
-pi        = args["pi"]
+env       = args["jue"]
 getimages = args["jg"]
 jnew      = args["jn"]
 jnewtext  = args["jnt"]
 jnum      = args["jun"]
-jproc     = args["ju"] or args["jnt"]
+jproc     = args["ju"] or args["jue"] or args["jnt"]
 jprocput  = args["jp"]
+pi        = args["pi"]
+
 jnewMaxNPics = 6
 
 List = glob.glob(Path)
@@ -849,7 +874,7 @@ if (jproc or jprocput or jnum):
                  jproc = True       # create new desc
            if (jproc):
               print "picman: prepare json descriptor " + el
-              JsonDscProcs(el, jnewMaxNPics, getimages)
+              JsonDscProcs(el, jnewMaxNPics, getimages, env)
            if (jprocput): 
               print "picman: %s put comments to images " % (el)
               JsondscPutComments(el) 
