@@ -34,7 +34,7 @@
 # Version 09/05/2016: rename modified to order dated images properly
 # Version 06/19/2017: added notes processing
 # Version 07/09/2017: added -mvd nand to get rid of non-alphanum characters in file names
-# Version 07/31/2017: added -jue. Now only -jue produces envelope around json desc in *.dscj.txt
+# Version 07/30/2017: added -jue. Now only -jue produces envelope around json desc in *.dscj.txt
 #                     To simplify corecting JSON syntax, -jn, -ju, -jun produce pure JSON in *.dscj.txt
 
 import sys, os, glob, re, time, json
