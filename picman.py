@@ -1,3 +1,5 @@
+#!/usr/bin/python
+
 # picman.py
 # Picture Manager: process image descriptors, rename, create thumbs
 
@@ -35,8 +37,18 @@
 # Version 06/19/2017: added notes processing
 # Version 07/09/2017: added -mvd nand to get rid of non-alphanum characters in file names
 # Version 07/30/2017: added -jue. Now only -jue produces envelope around json desc in *.dscj.txt
-#                     To simplify corecting JSON syntax, -jn, -ju, -jun produce pure JSON in *.dscj.txt
-
+#                     To simplify correcting JSON syntax, -jn, -ju, -jun produce pure JSON in *.dscj.txt
+# Version 11/18/2017: use split() instead of beautifulsoup to extract jpg's from Picasa index
+# Version 11/19/2017: Win7 / CentOS version
+# Version 03/25/2018: changed CLI to use pre-existing *.dscj.txt
+#                     path arg retired
+#                     now -mvc implements nand funcionality
+# Version 03/30/2018: added -mvt option and renameExifTime() 
+# Version 07/01/2018: added getting notes from pre-existing *.dscj.txt
+# Version 08/11/2018: added setDesc() to create descriptor if non-existent
+# Version 10/22/2018: process .*jpg files
+#                     Picasa index.html ===> index.bak
+                      
 import sys, os, glob, re, time, json
 import copy, uuid
 import shutil
@@ -45,7 +57,6 @@ from   PIL import Image
 from   time import sleep
 from   datetime import datetime
 from   iptcinfo import IPTCInfo
-from   bs4 import BeautifulSoup
 import warnings
 warnings.filterwarnings('ignore')
 import logging
@@ -54,9 +65,15 @@ import pprint
 import validators
 
 # For Win ActivePython run:
-# easy_install Pillow
+# To install PIL, run PIL-1.1.7.win32-py2.7.exe http://www.pythonware.com/products/pil/
 # pypm install iptcinfo
-# pypm install beautifulsoup4
+# pip install validators
+
+# For CentOS:
+# yum -y install python-pip  - if necessary
+# yum install jhead
+# pip install Pillow
+# pip install iptcinfo
 # pip install validators
 
 #----------------------------------------------------------------------------------------------------
@@ -83,7 +100,7 @@ def ThumbC(imgI, Tsize, bgColor):
  else:                     imgO = imgI.replace(".JPG", th + ".JPG")
  print "picman: %s=>%s" % (imgI, imgO)
 
- blank = Image.new('RGBA', (Tsize, Tsize), bgColor)
+ blank = Image.new('RGB', (Tsize, Tsize), bgColor)
  img   = Image.open(imgI)
  width, height = img.size
  if (width>=height): 
@@ -92,10 +109,17 @@ def ThumbC(imgI, Tsize, bgColor):
  else:              
      THUMB_SIZE = ((width * Tsize)/height, Tsize)
      BOX        = ((Tsize - THUMB_SIZE[0])/2, 0)
- img.thumbnail(THUMB_SIZE)
- blank.paste(img, BOX)
- blank.save(imgO) 
-
+ 
+ step = 0
+ try:
+	img.thumbnail(THUMB_SIZE)
+	step = 1
+	blank.paste(img, BOX)
+	step = 2
+	blank.save(imgO) 
+ except Exception, e:
+    print "ThumbC(): failed step %d - %s" % (step, str(e)) 
+    sys.exit()	
  return
 #----------------------------------------------------------------------------------------------------------
 # Put Picasa/IPTC caption to the given file
@@ -116,7 +140,7 @@ def iptcCaptionSet(fn, caption):
      #info.data['keywords']  = ""
      n = 3
      info.save()
-     os.remove(fn+"~")
+     os.remove(fn + "~")
   except Exception, e:
     info  = None
     print "[%s]" % (caption)
@@ -130,7 +154,7 @@ def iptcCaptionGet(fn):
   info    = None
   try:
      info = IPTCInfo(fn, force=True)
-     caption = info.data['caption/abstract']  
+     caption = utf8(info.data['caption/abstract'])  
   except Exception, e:
     info = None
     print "iptcCaptionGet() failed to open IPTC in %s - %s" % (fn, str(e))
@@ -320,8 +344,18 @@ def GetJpgComments(descname, List, MaxNPics, getimages):
  LOut = {descname : LOut1}
  LOut["notes"] = [["", ""], ["", ""]]
  
- json.dump(LOut, open(descname + ".dscj.txt", "w"), indent=1, sort_keys=True)
-
+ # try to get notes from pre-existing desc
+ fs = 0
+ tmp = {}
+ try: 
+     fs = os.path.getsize(descname + ".dscj.txt")
+ except: pass
+ if (fs>0): tmp = JsonDscGet(descname + ".dscj.txt")
+ if ("notes" in tmp):
+    LOut["notes"] = copy.deepcopy(tmp["notes"]) 
+    print "GetJpgComments(): got pre-existing notes"
+ 
+ json.dump(LOut, open(descname + ".dscj.txt", "w"), indent=1, sort_keys=True, encoding ="latin1")
  JsonDscProcs(descname + ".dscj.txt", 0, getimages, None) # process new descriptor immediately
 
  return len(Res)
@@ -385,7 +419,7 @@ def JsonDscGet(fname):
  try:
    F   = open(fname)
    # get json descriptor
-   F_  = " " + F.read() + " "
+   F_  = " " + utf8(F.read()) + " "
    # get json descriptor
    if ("<!--dscj" in F_): 
       F_  = F_.split("<!--dscj")
@@ -492,11 +526,12 @@ def NotesProcs(IN):
            print "NotesProcs(): Wrong note %s" % (el)
            pprint.pprint(el_)
            return ""
-        if (not len(el)==2):
+        if (len(el)!=2):
            print "NotesProcs(): Wrong note %s" % (el)
            pprint.pprint(el)
            return ""
-        if (el[0].__class__.__name__!="str" or el[1].__class__.__name__!="str"):
+        str = el[1].__class__.__name__=="str" or el[1].__class__.__name__=="unicode"  
+        if (el[0].__class__.__name__!="str" and not str ):
            print "NotesProcs(): Wrong note (%s, %s) in %s" % (el[0].__class__.__name__, el[1].__class__.__name__, el)
            pprint.pprint(el)
            return ""
@@ -519,7 +554,7 @@ def NotesProcs(IN):
  print "NotesProcs(): %d notes processed" % (len(IN))
  return res
 #----------------------------------------------------------------------------------------------------------------
-# Put comments into jpg's for this JSON descriptor
+# Put comments into jpg's for this JSON descriptor using jhead
 def JsondscPutComments(fname):
 
  IN     = JsonDscGet(fname)
@@ -564,7 +599,7 @@ def JsondscRenum(fname):
     del IN["notes"]
     
  if (len(IN.keys())!=1): 
-    print "JsonDscGet(%s): wrong descriptor len=%d" % (fname, len(IN.keys()))
+    print "JJsondscRenum(%s): wrong descriptor len=%d" % (fname, len(IN.keys()))
     return []
 
  INkey = IN.keys()[0]
@@ -628,29 +663,39 @@ def procPicasaIndex(fname):
     return L
 
  try:
-    F    = open(fname, "r")
-    F_   = F.read()
+    F  = open(fname, "r")
+    F_ = F.read().lower()
     F.close()
-    soup = BeautifulSoup(F_, 'html.parser')
-    L_ = soup.find_all('a')
+    L_ = []
+    if ("img" in F_): L_ = F_.split("<img ")[1:]
     for item in L_:
-        curr = item.img["src"].replace("_", ".").replace("thumbnails/", "")
-        ok   = curr.endswith(".jpg") and not curr in L and os.path.exists(curr)
+        if (not "src=" in item): continue
+        item = item.split("src=")[1]
+        if (not ".jpg" in item): continue
+        item = item.split(".jpg")[0] + ".jpg"
+        item = item.split("/")[-1]
+        item = item.replace("_", ".")
+        ok   = not item in L and os.path.exists(item)
         if (not ok): 
            L = []
-           print "procPicasaIndex(): wrong item " + curr
+           print "procPicasaIndex(): wrong item " + item
            break
-        L.append(curr)
+        L.append(item)
  except Exception, e:
     L = []
     print "procPicasaIndex(): wrong %s: %s" % (fname, str(e)) 
 
  if (len(L)==0): print "procPicasaIndex(): cannot use %s" % (fname)
-
+ else:
+    fnbak = fname.replace(".html", ".bak")
+    if (os.path.exists(fnbak)): os.remove(fnbak)
+    os.rename(fname, fnbak)
+    print "procPicasaIndex(): %s ===> %s" % (fname, fnbak)
+ 
  return L
 #----------------------------------------------------------------------------------------------------------------\
 # Rename files in List to: prefix.nnn[.date].ext
-# For prefix = nand: replace non-alphanum characters by dots.
+# For prefix = "": replace non-alphanum characters by dots.
 def rename(addDate, prefix, List):
  
  fname = ""
@@ -688,8 +733,9 @@ def rename(addDate, prefix, List):
        nowsec = os.path.getmtime(el)
        now    = "." + time.strftime('%Y.%m.%d', time.localtime(nowsec))
        
-    if (prefix!="nand"): name = el_ + "%s.%.03d%s.%s" % (prefix.lower(), N, now, ext.lower())
-    else:                name = re.sub('[^a-zA-Z0-9]', '.', el)
+    if (prefix!=""): name = el_ + "%s.%.03d%s.%s" % (prefix.lower(), N, now, ext.lower())
+    else:            name = (re.sub('[^a-zA-Z0-9]', '.', el)).lower()
+    if (name.startswith(".")): name = "0" + name                  
     #print "=>%s: %s*%s" % (prefix, name, el)
         
     if (name!=el and os.path.exists(name)): 
@@ -737,6 +783,62 @@ def rename(addDate, prefix, List):
 
  return N
 #----------------------------------------------------------------------------------------------------------
+# Rename files in List to: exif_time.old_name...jpg
+# 
+def renameExifTime(List):
+ List_ = []
+ for f in List:
+    if (f.endswith("_t.jpg")): 
+        os.remove(f)
+        continue
+    if (f.endswith("...jpg")): continue
+    List_.append(f)
+ List = List_
+ 
+ if (len(List)==0):
+    print "renameExifTime(): nothing to process"
+    return 0
+ print "renameExifTime(): %d items to process" % (len(List))
+
+ for fn in List: 
+       # try get DateTimeOriginal from EXIF
+       t = ""
+       f = open(fn, "rb") # we need to open and close this file explicitly!
+       im = Image.open(f)
+       #if hasattr(im, '_getexif'):
+       try:    
+            exifdata = im._getexif()
+            if (exifdata!=None and 36867 in exifdata): 
+               #print exifdata
+               t = exifdata[36867] # DateTimeOriginal
+            if (int(t[:2])>20 or int(t[:2])<19): t = "" 
+       except: pass
+       f.close()
+       if (t==""):
+           print "renameExifTime(): %s - no exif time" % (fn)
+           continue
+
+       t = t.replace(":", "")
+       t = t.replace(" ", ".")
+       fnNew = t + "." + fn[:16].lower()
+       if (not fnNew.endswith(".jpg")): fnNew = fnNew + ".jpg"
+       fnNew = fnNew.replace(".jpg", "...jpg")
+       fnNew = (re.sub('[^a-zA-Z0-9]', '.', fnNew))
+       # fnNew = fnNew.replace("_", ".")
+       #print fnNew
+       
+       if os.path.exists(fnNew): 
+          os.unlink(fnNew)
+          print "renameExifTime(): removed %s" % (fnNew)
+       
+       print "renameExifTime(): %s=>%s" % (fn, fnNew)
+       try: 
+          os.rename(fn, fnNew)
+       except:   
+          print "renameExifTime(): %s=>%s failed" % (fn, fnNew)
+ 
+ return len(List)
+#----------------------------------------------------------------------------------------------------------
 # For files in List, set mod, access times equal to creation time
 def setTime(List):
 
@@ -765,40 +867,67 @@ def setTime(List):
        os.utime(f, (t, t)) # set mod,access times
  return
 #----------------------------------------------------------------------------------------------------------
+# desc can be info.txt or dscj.txt
+# Find matching descriptor in the current dir or craete a new one
+def setDesc(desc):
+ L = glob.glob("*" + desc)
+ L.sort()
+ res = ""
+ if (len(L)>0): 
+   res = L[0]
+   return res # got desc
+   
+ # Create new desc using the current dir name
+ cwd = os.getcwd().replace("\\", "/").split("/")[-1]
+ p = re.compile("[^a-zA-Z0-9\.]")
+ res = p.sub("", cwd) + "." + desc
+
+ open(res, 'a').close()
+ 
+ print "setDesc: no descriptor found, created empty " + res
+ 
+ return res # new desc created
+#----------------------------------------------------------------------------------------------------
 # extract options
 
 notes = '''
 Notes:
-(1) Image captions are kept in jpg comment fields or in IPTC. 
+   (1) xxx.dscj.txt should be always present in curr dir.
+   It is used for jpg renaming and keeps JSON descriptor.
+   (2) Image captions are kept in jpg comment fields or in IPTC. 
    If IPTC is empty, jpg comment is used.
 '''
 
 parser = argparse.ArgumentParser(description=notes)
 group  = parser.add_mutually_exclusive_group(required=True)
-group.add_argument('-mv',   help="Rename *.jpg files to prefix.nnn.ext; for -mv nand replace non-alphanum charcters by dots ")
-group.add_argument('-mvd',  help="Rename files to prefix.nnn.date.ext")
+group.add_argument('-mv',   action="store_true", help="Rename *.jpg files to prefix.nnn.ext")
+group.add_argument('-mvc',  action="store_true", help="Rename *.jpg files to lower case, replace non-alphanum characters by dots")
+group.add_argument('-mvd',  action="store_true", help="Rename *.jpg files to prefix.nnn.date.ext")
+group.add_argument('-mvt',  action="store_true", help="Rename *.jpg files using EXIF time")
 group.add_argument('-T',    action="store_true", help="Set file mod time from its EXIF info or creation time if no EXIF")
 group.add_argument('-tS',   action="store_true", help="Create square thumbs: size 120,240")
 group.add_argument('-ts',   type=int, help="Create square thumbs with given size")
-group.add_argument('-jn',   type=str, help="Create new descriptors *.dscj.txt")
+group.add_argument('-jn',   action="store_true", help="Create new descriptor *.dscj.txt")
 group.add_argument('-jnt',  action="store_true", help="Create new descriptor *.dscj.txt from *.dsc.txt")
-group.add_argument('-ju',   action="store_true", help="Update existing descriptors *.dscj.txt")
+group.add_argument('-ju',   action="store_true", help="Update existing descriptor *.dscj.txt")
 group.add_argument('-jue',  action="store_true", help="Same as -ju plus create envelope around json in *.dscj.txt")
-group.add_argument('-jun',  action="store_true", help="Recreate descriptors *.dscj.txt, renumber images") 
+group.add_argument('-jun',  action="store_true", help="Recreate descriptor *.dscj.txt, renumber images") 
 group.add_argument('-jp',   action="store_true", help="Put comments from the given *.dscj.txt to jpg's")
 parser.add_argument('-jg',  action="store_true", help="Try copying image files specified in *.dscj.txt from ./bak to this dir") 
 parser.add_argument('-pi',  action="store_true", help="Use Picasa-generated index") 
 parser.add_argument("-tbg", type = str, help="Background color code for thumbs. Default is #c0c0c0")
-parser.add_argument("path", type = str, help="files to process")
+#parser.add_argument("path", type = str, help="files to process")
 args = vars(parser.parse_args())
 
-Path      = args["path"]
-toSetTime = args["T"]
+desc = setDesc("dscj.txt")  
+print "picman: using " + desc
 
-Rename    = ""
-addDate   = args["mvd"]!=None 
-if (addDate): Rename = args["mvd"]
-if (args["mv"]!=None): Rename = args["mv"]
+desc = desc.replace(".dscj.txt", "")  
+
+toSetTime  = args["T"]
+Rename     = args["mv"] or args["mvd"] or args["mvc"]
+RenameExifTime = args["mvt"]
+addDate    = args["mvd"]
 
 Tsize     = []
 if (args["ts"]!=None): Tsize = [args["ts"]]
@@ -825,14 +954,12 @@ pi        = args["pi"]
 
 jnewMaxNPics = 6
 
-List = glob.glob(Path)
-if (pi>0):
+List = glob.glob(".*jpg") + glob.glob("*")
+if (pi):
    List = [el for el in List if ("index.htm" in el.lower())]
 else: 
    List = [el for el in List if (el.lower().endswith(".jpg"))] # use only jpg files
 List.sort()
-#print "Rename=" + Rename
-#print "Path=" + Path
 
 if (len(List)==0 and not jproc and not jnewtext):
    print "picman: Nothing to process"
@@ -840,54 +967,57 @@ if (len(List)==0 and not jproc and not jnewtext):
    exit(0)
 
 #----------------------------------------------------------------------------------------------------------
-if (jnew!=None):
-   print "picman: prepare new json descriptor %s.dscj.txt: %s" % (jnew, Path)
-   N      = GetJpgComments(jnew, List, jnewMaxNPics, getimages)
+if (jnew):
+   print "picman: prepare new json descriptor %s.dscj.txt: %s" % (desc, "*")
+   N      = GetJpgComments(desc, List, jnewMaxNPics, getimages)
    print "picman: %d processed images" % N
    print "picman: stop"
    exit(0)
 
 #----------------------------------------------------------------------------------------------------------
 if (jnewtext):
-   fname = ""
-   List = glob.glob(Path)
-   for el in List:
-       if (el.endswith(".dsc.txt")):
-          fname = el
-          break  
-   if (fname!=""): 
-      print "picman: prepare new json descriptor from: " + fname
-      JsondscFromText(fname, jnewMaxNPics, getimages)
+   fname = desc
+   if (not os.path.isfile(desc + ".dsc.txt")):
+       print "picman: no %s.dsc.txt - stop" % (desc)
+       exit(0)
+   print "picman: prepare new json descriptor from: " + fname
+   JsondscFromText(desc, jnewMaxNPics, getimages)
    print "picman: stop"
    exit(0)
 
 #----------------------------------------------------------------------------------------------------------
 if (jproc or jprocput or jnum):
-    List = glob.glob(Path)
     Pics = []
-    for el in List:
-        if (el.endswith("dscj.txt")): 
-           if (jnum): 
-              print "picman: %s renumber images " % (el)
-              Pics = JsondscRenum(el)
-              if (len(Pics)>0):  
-                 jproc = True       # create new desc
-           if (jproc):
-              print "picman: prepare json descriptor " + el
-              JsonDscProcs(el, jnewMaxNPics, getimages, env)
-           if (jprocput): 
-              print "picman: %s put comments to images " % (el)
-              JsondscPutComments(el) 
+    fname = desc + ".dscj.txt"
+    if (jnum): 
+        print "picman: renumber images using " + fname
+        Pics = JsondscRenum(fname)
+        if (len(Pics)>0):  
+           jproc = True       # create new desc
+    if (jproc):
+        print "picman: prepare json descriptor " + fname
+        JsonDscProcs(fname, jnewMaxNPics, getimages, env)
+    if (jprocput): 
+        print "picman: %s put comments to images " % (fname)
+        JsondscPutComments(fname) 
     if (len(Pics)==0): 
-       print "picman: stop"
-       exit(0)
+        print "picman: stop"
+        exit(0)
     List  = Pics # create new thumbs for pics in List
     Tsize = [120, 240]
 
 #----------------------------------------------------------------------------------------------------------
-if Rename!="":
-   print "picman: rename files: " + Path
-   print "picman: %d processed files" % rename(addDate, Rename, List)
+if (RenameExifTime):
+   print "picman: rename images by creation time"
+   print "picman: %d processed images" % renameExifTime(List)
+   print "picman: stop"
+   exit(0)
+    
+#----------------------------------------------------------------------------------------------------------
+if (Rename):
+   print "picman: rename images"
+   if (args["mvc"]): desc = "";
+   print "picman: %d processed images" % rename(addDate, desc, List)
    print "picman: stop"
    exit(0)
    
@@ -895,7 +1025,7 @@ logging.basicConfig(filename='picman.log', level=logging.CRITICAL)
 
 #----------------------------------------------------------------------------------------------------------
 if (toSetTime):
-   print "picman: Set mod times for %d images: %s" % (len(List), Path)
+   print "picman: Set mod times for %d images: %s" % (len(List), "*")
    setTime(List)
    print "picman: Stop"
    logging.shutdown()
@@ -904,7 +1034,7 @@ if (toSetTime):
     
 #----------------------------------------------------------------------------------------------------------
 if (len(Tsize)>0): 
-   print "picman: Prepare thumbs: Tsize=%s bgColor=%s %s" % (str(Tsize), bgColor, Path)
+   print "picman: Prepare thumbs: Tsize=%s bgColor=%s %s" % (str(Tsize), bgColor, "*")
    for imgI in List:
        if (imgI.find("_t.jpg")>0): continue
        if (imgI.find("_t.JPG")>0): continue
