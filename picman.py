@@ -48,6 +48,8 @@
 # Version 08/11/2018: added setDesc() to create descriptor if non-existent
 # Version 10/22/2018: process .*jpg files
 #                     Picasa index.html ===> index.bak
+# Version 12/17/2018: updated utf8()
+# Version 08/14/2019: added procCsv()
                       
 import sys, os, glob, re, time, json
 import copy, uuid
@@ -55,7 +57,8 @@ import shutil
 import argparse
 from   PIL import Image
 from   time import sleep
-from   datetime import datetime
+from   datetime import datetime, timedelta
+import csv
 from   iptcinfo import IPTCInfo
 import warnings
 warnings.filterwarnings('ignore')
@@ -78,17 +81,7 @@ import validators
 
 #----------------------------------------------------------------------------------------------------
 # all symbols after x'80' => HTML encoding $#xxx;
-def utf8(latin1): 
-# http://inamidst.com/stuff/2010/96.py
-# http://www.ascii-code.com/
-      #print "=>"
-      Res = ""
-      for character in latin1: 
-         codepoint = ord(character)
-         if codepoint < 0x80: Res = Res + character
-         else: Res = "%s&#%d;" % (Res, codepoint) 
-
-      return Res
+def utf8(str): return str.decode('utf_8').encode('ascii', 'xmlcharrefreplace')
 #----------------------------------------------------------------------------------------------------------
 # Prepare thumb by resizing the image and 
 # placing it in the center of properly colored square
@@ -301,7 +294,11 @@ def GetJpgComments(descname, List, MaxNPics, getimages):
  # get comments from jpg files in List
  for fname in List:
   if fname.lower().endswith("_t.jpg"): continue # ignore thumbs
-  app     = Image.open(fname).app
+  try: 
+     app     = Image.open(fname).app
+  except:
+     print "GetJpgComments(): failed to process %s" % (fname)
+     exit(0)
   comment = ""
   if ("COM" in app): comment = app["COM"].replace("\x00", "")
   Res.append([fname, comment])
@@ -664,7 +661,7 @@ def procPicasaIndex(fname):
 
  try:
     F  = open(fname, "r")
-    F_ = F.read().lower()
+    F_ = utf8(F.read().lower())
     F.close()
     L_ = []
     if ("img" in F_): L_ = F_.split("<img ")[1:]
@@ -791,7 +788,8 @@ def renameExifTime(List):
     if (f.endswith("_t.jpg")): 
         os.remove(f)
         continue
-    if (f.endswith("...jpg")): continue
+    # skip previously processed files    
+    if (re.match(r"[0-9]{8}\.[0-9]{6}\..*", f) and f.endswith("...jpg")): continue
     List_.append(f)
  List = List_
  
@@ -839,6 +837,88 @@ def renameExifTime(List):
  
  return len(List)
 #----------------------------------------------------------------------------------------------------------
+#Generate .url's for Google maps from GPS Logger for Android csv files. dst is offset for Zulu
+
+def procCsv(dst):
+ if (dst==None): return
+ 
+ Lcsv = glob.glob("*.csv")
+ if (len(Lcsv)==0):
+    print "procCsv(): nothing to process"
+    return
+    
+ print "procCsv(): dst=" + str(dst)
+ Lurl = glob.glob("2[0-9]*.[0-9]*.url")
+ for fn in Lurl: os.remove(fn)
+
+ Ljpg = glob.glob("2[0-1][0-9]*.[0-9]*...jpg") 
+ if (len(Ljpg)==0):
+    print "procCsv(): no images found"
+    return
+    
+ res = []
+ # add items related to images
+ for line in Ljpg:
+         tmp = line.split(".")
+         if (len(tmp)<3): continue
+         res.append([tmp[0] + "." + tmp[1], None, None, "jpg"])
+
+ for fn in Lcsv:
+     curr = [] 
+     try:
+       with open(fn, "rb") as f:
+            reader = csv.reader(f)
+            for row in reader: curr.append(row)
+     except Exception, e:
+            print "procCsv(): Failed to read %s - %s" % (fn, str(e))
+            continue
+
+     if (len(curr)<2 or len(curr[0])<3 or curr[0][0]!="time" or curr[0][1]!="lat" or curr[0][2]!="lon"):
+        print "procCsv(): Wrong %s" % (fn)
+        continue
+     curr.pop(0)
+
+     print "procCsv(): Process %s - %d lines" % (fn, len(curr))
+     # Prepare res with dst-adjusted dates
+     resok = True
+     for line in curr:
+         if (len(line)<3):
+             print "procCsv(): Wrong %s - line too short" % (fn)
+             resok = False
+             break
+         (date, lat, lon) = (line[0], line[1], line[2])
+         date_ = date.replace("Z", "UTC")
+         date_ = datetime.strptime(date_, "%Y-%m-%dT%H:%M:%S.%f%Z")
+         date_ = date_+ timedelta(hours=dst)
+         date_ = date_.strftime("%Y%m%d.%H%M%S")
+         # print date + "=>" + date_
+         res.append([date_, lat, lon, "csv"])
+     if (not resok): continue
+     if (os.path.exists(fn + ".bak")): os.remove(fn + ".bak")
+     os.rename(fn, fn + ".bak")
+     
+ res.sort()
+ for i in range(0, len(res)):
+          if (res[i][3]!="jpg"): continue
+          if (i>0 and res[i-1][3]=="csv"): res[i-1][3] = "csv_"
+          if (i<len(res)-1 and res[i+1][3]=="csv"): res[i+1][3] = "csv_"
+
+ #pprint.pprint(res)
+ # prepare .url shortcuts
+ N = 0
+ fmat = "[InternetShortcut]\nURL=https://www.google.com/maps/?q=%s,%s"
+ for line in res:
+        if (line[3]!="csv_"): continue
+        N = N+1
+        shcut  = fmat % (line[1], line[2])
+        shname = "%s.%+03d.url" % (line[0], dst)
+        f = open(shname, "w")
+        f.write(shcut)
+        f.close()
+ print "procCsv(): %d items generated" % (N)
+     
+ return 
+#----------------------------------------------------------------------------------------------------------
 # For files in List, set mod, access times equal to creation time
 def setTime(List):
 
@@ -868,7 +948,7 @@ def setTime(List):
  return
 #----------------------------------------------------------------------------------------------------------
 # desc can be info.txt or dscj.txt
-# Find matching descriptor in the current dir or craete a new one
+# Find matching descriptor in the current dir or create a new one
 def setDesc(desc):
  L = glob.glob("*" + desc)
  L.sort()
@@ -916,6 +996,7 @@ group.add_argument('-jp',   action="store_true", help="Put comments from the giv
 parser.add_argument('-jg',  action="store_true", help="Try copying image files specified in *.dscj.txt from ./bak to this dir") 
 parser.add_argument('-pi',  action="store_true", help="Use Picasa-generated index") 
 parser.add_argument("-tbg", type = str, help="Background color code for thumbs. Default is #c0c0c0")
+parser.add_argument('-gps',  type=int, help="Generate .url's for Google maps from GPS Logger for Android csv files. Value is dst offset for Zulu")
 #parser.add_argument("path", type = str, help="files to process")
 args = vars(parser.parse_args())
 
@@ -1010,6 +1091,7 @@ if (jproc or jprocput or jnum):
 if (RenameExifTime):
    print "picman: rename images by creation time"
    print "picman: %d processed images" % renameExifTime(List)
+   procCsv(args["gps"])
    print "picman: stop"
    exit(0)
     
