@@ -49,7 +49,7 @@
 # Version 10/22/2018: process .*jpg files
 #                     Picasa index.html ===> index.bak
 # Version 12/17/2018: updated utf8()
-# Version 08/14/2019: added procCsv()
+# Version 08/19/2019: added procGps()
                       
 import sys, os, glob, re, time, json
 import copy, uuid
@@ -837,31 +837,29 @@ def renameExifTime(List):
  
  return len(List)
 #----------------------------------------------------------------------------------------------------------
-#Generate .url's for Google maps from GPS Logger for Android csv files. dst is offset for Zulu
-
-def procCsv(dst):
+# Generate .*.gps.htm with links to Google maps using csv files from GPS Logger. dst is offset for Zulu
+def procGps(dst):
  if (dst==None): return
  
  Lcsv = glob.glob("*.csv")
  if (len(Lcsv)==0):
-    print "procCsv(): nothing to process"
+    print "procGps(): nothing to process"
     return
     
- print "procCsv(): dst=" + str(dst)
- Lurl = glob.glob("2[0-9]*.[0-9]*.url")
- for fn in Lurl: os.remove(fn)
+ print "procGps(): dst=" + str(dst)
 
  Ljpg = glob.glob("2[0-1][0-9]*.[0-9]*...jpg") 
  if (len(Ljpg)==0):
-    print "procCsv(): no images found"
+    print "procGps(): no images found"
     return
     
+ maxDelta = 10*60 # max reasonable difference between image date and gps date
  res = []
  # add items related to images
  for line in Ljpg:
          tmp = line.split(".")
          if (len(tmp)<3): continue
-         res.append([tmp[0] + "." + tmp[1], None, None, "jpg"])
+         res.append([tmp[0] + "." + tmp[1], None, None, line, "jpg"])
 
  for fn in Lcsv:
      curr = [] 
@@ -870,54 +868,103 @@ def procCsv(dst):
             reader = csv.reader(f)
             for row in reader: curr.append(row)
      except Exception, e:
-            print "procCsv(): Failed to read %s - %s" % (fn, str(e))
+            print "procGps(): Failed to read %s - %s" % (fn, str(e))
             continue
 
      if (len(curr)<2 or len(curr[0])<3 or curr[0][0]!="time" or curr[0][1]!="lat" or curr[0][2]!="lon"):
-        print "procCsv(): Wrong %s" % (fn)
+        print "procGps(): Wrong %s" % (fn)
         continue
      curr.pop(0)
 
-     print "procCsv(): Process %s - %d lines" % (fn, len(curr))
+     print "procGps(): Process %s - %d lines" % (fn, len(curr))
      # Prepare res with dst-adjusted dates
-     resok = True
      for line in curr:
          if (len(line)<3):
-             print "procCsv(): Wrong %s - line too short" % (fn)
-             resok = False
+             print "procGps(): Wrong %s - line too short" % (fn)
              break
          (date, lat, lon) = (line[0], line[1], line[2])
          date_ = date.replace("Z", "UTC")
          date_ = datetime.strptime(date_, "%Y-%m-%dT%H:%M:%S.%f%Z")
          date_ = date_+ timedelta(hours=dst)
-         date_ = date_.strftime("%Y%m%d.%H%M%S")
-         # print date + "=>" + date_
-         res.append([date_, lat, lon, "csv"])
-     if (not resok): continue
-     if (os.path.exists(fn + ".bak")): os.remove(fn + ".bak")
-     os.rename(fn, fn + ".bak")
+         date1 = date_.strftime("%Y%m%d.%H%M%S")
+         date2 = date_.strftime("%Y-%m-%d %H:%M:%S")
+         # print "dbg: " + date + "=>" + date1 + " " + date2
+         res.append([date1, lat, lon, date2, "gps"])
      
  res.sort()
- for i in range(0, len(res)):
-          if (res[i][3]!="jpg"): continue
-          if (i>0 and res[i-1][3]=="csv"): res[i-1][3] = "csv_"
-          if (i<len(res)-1 and res[i+1][3]=="csv"): res[i+1][3] = "csv_"
+ print "procGps(): total processed items: %d" % (len(res))
+ for i in range(0, len(res)): # mark gps items - neighbours of jpg's
+          if (res[i][4]!="jpg"): continue
+          currDate = datetime.strptime(res[i][0], "%Y%m%d.%H%M%S")
+          left  = findLeftCsv(res, i)
+          right = findRightCsv(res, i)
+          #print "dbg: %d left=%d right=%d" % (i, left, right)
+          if (left>=0 and right>=0):
+             leftDate = datetime.strptime(res[left][0], "%Y%m%d.%H%M%S")
+             rightDate = datetime.strptime(res[right][0], "%Y%m%d.%H%M%S")
+             # print "dbg: leftDate=%s rightDate=%s currDate=%s" % (leftDate, rightDate, currDate)
+             leftSub = (currDate - leftDate).total_seconds()
+             rightSub = (rightDate - currDate).total_seconds()
+             if (leftSub<rightSub): right = -1
+             else: left = -1
+          if (left>=0):  
+              res[i][1] = left
+              leftDate  = datetime.strptime(res[left][0], "%Y%m%d.%H%M%S")
+              res[i][2] = (currDate-leftDate).total_seconds()
+          if (right>=0): 
+              res[i][1] = right
+              rightDate = datetime.strptime(res[right][0], "%Y%m%d.%H%M%S")
+              res[i][2] = (rightDate-currDate).total_seconds()
+          
+ # prepare html
 
- #pprint.pprint(res)
- # prepare .url shortcuts
- N = 0
- fmat = "[InternetShortcut]\nURL=https://www.google.com/maps/?q=%s,%s"
+ Njpg = 0
+ html = "<html>\n<body>\n"
+ html = html + "<h3>Geolocated Images</h3>\n"
+ html = html + "GPS info from: <a target=win00 href=\"https://play.google.com/store/apps/details?id=com.mendhak.gpslogger&hl=en_US\">GPS Logger for Android</a><br/>\n" 
+ html = html + "Time zone: UTC%+d<br/>\n" % (dst) 
+ html = html + "Images: %d<br/>\n" % (len(Ljpg)) 
+ html = html + "Use Map links to locate images on Google Maps\n" + "<hr>\n"
+ 
+ fmatLink = "Map: <a style=\"color:black\" target=win00 href=\"https://www.google.com/maps/?q=%s,%s\">%s</a>"
+ fmatImg  = "<img height=480 src=\"./%s\">"
+ # pprint.pprint(res)
  for line in res:
-        if (line[3]!="csv_"): continue
-        N = N+1
-        shcut  = fmat % (line[1], line[2])
-        shname = "%s.%+03d.url" % (line[0], dst)
-        f = open(shname, "w")
-        f.write(shcut)
-        f.close()
- print "procCsv(): %d items generated" % (N)
-     
- return 
+           if (line[4]!="jpg"): continue
+           img = fmatImg % (line[3])
+           t = line[3]
+           (Y, M, D, h, m, s) = (t[0:4], t[4:6], t[6:8], t[9:11], t[11:13], t[13:15])
+           date = Y + "-" + M + "-" + D + " " + h + ":" + m + ":" + s
+           gpsLine = res[line[1]]
+           gpsLink = fmatLink % (gpsLine[1], gpsLine[2], gpsLine[3])
+           if (line[2]>maxDelta): gpsLink = gpsLink.replace("color:black", "color:red")
+           #print "dbg: date=%s delta=%d" % (date, line[2])
+           html = html + "<p title=\"" + line[3] + "\">" + "Image Date: " + date + "\n<br/>" + gpsLink + "<br/>\n"
+           html = html + img + "</p>\n"
+           Njpg = Njpg + 1
+ 
+ html = html + "</body>\n</html>"
+
+ fn = os.getcwd().replace("\\", "/").replace("_", "")
+ fn = fn.split("/")[-1] + ".gps.htm"
+ #if (os.path.exists(fn)): os.remove(fn)
+ f = open(fn, "w")
+ f.write(html)
+ f.close()
+
+ print "procGps(): %d images processed, %s generated" % (Njpg, fn)
+
+ return
+#--------------------------------------------------------------------------------------
+def findLeftCsv(L, ind):
+ for i in range(ind-1, -1, -1):
+    if (L[i][4].startswith("gps")): return i
+ return -1
+#--------------------------------------------------------------------------------------
+def findRightCsv(L, ind): 
+ for i in range(ind+1, len(L)):
+    if (L[i][4].startswith("gps")): return i
+ return -1 
 #----------------------------------------------------------------------------------------------------------
 # For files in List, set mod, access times equal to creation time
 def setTime(List):
@@ -995,8 +1042,8 @@ group.add_argument('-jun',  action="store_true", help="Recreate descriptor *.dsc
 group.add_argument('-jp',   action="store_true", help="Put comments from the given *.dscj.txt to jpg's")
 parser.add_argument('-jg',  action="store_true", help="Try copying image files specified in *.dscj.txt from ./bak to this dir") 
 parser.add_argument('-pi',  action="store_true", help="Use Picasa-generated index") 
-parser.add_argument("-tbg", type = str, help="Background color code for thumbs. Default is #c0c0c0")
-parser.add_argument('-gps',  type=int, help="Generate .url's for Google maps from GPS Logger for Android csv files. Value is dst offset for Zulu")
+parser.add_argument("-tbg", type=str, help="Background color code for thumbs. Default is #c0c0c0")
+parser.add_argument('-gps', type=int, help="Generate .url's for Google maps from GPS Logger for Android csv files. Value is dst offset for Zulu")
 #parser.add_argument("path", type = str, help="files to process")
 args = vars(parser.parse_args())
 
@@ -1091,7 +1138,7 @@ if (jproc or jprocput or jnum):
 if (RenameExifTime):
    print "picman: rename images by creation time"
    print "picman: %d processed images" % renameExifTime(List)
-   procCsv(args["gps"])
+   procGps(args["gps"])
    print "picman: stop"
    exit(0)
     
