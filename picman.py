@@ -8,8 +8,6 @@
 # Version 07/18/2011
 # Version 08/02/2011: introduced thumb control
 # Version 08/15/2011: minor fix: process file names with different capitalization
-# Version 08/29/2011: minor fix: get exif from given file
-# Version 10/12/2011: introduced jpg comments processing 
 # Version 11/12/2011: introduced file rename
 # Version 02/18/2012: thumb alignment is always done internally using PIL
 # Version 11/06/2012: introduced jpg comments from XPTitle field
@@ -31,8 +29,8 @@
 # Version 06/06/2015: introduced utf8
 # Version 07/16/2016: introduced processing of Picasa-generated index
 # Version 07/23/2016: instead of old JsondscSplitLastGroup logic, empty captions are made " ". 
-#                     Now -jun produces the correct image groups
-#                     Enable full Picasa processing of IPTC captions 
+#                     now -jun produces the correct image groups
+#                     enable full Picasa processing of IPTC captions 
 # Version 09/05/2016: rename modified to order dated images properly
 # Version 06/19/2017: added notes processing
 # Version 07/09/2017: added -mvd nand to get rid of non-alphanum characters in file names
@@ -50,6 +48,7 @@
 #                     Picasa index.html ===> index.bak
 # Version 12/17/2018: updated utf8()
 # Version 08/19/2019: added procGps()
+# Version 09/04/2019: disable IPTC warnings
                       
 import sys, os, glob, re, time, json
 import copy, uuid
@@ -60,10 +59,6 @@ from   time import sleep
 from   datetime import datetime, timedelta
 import csv
 from   iptcinfo import IPTCInfo
-import warnings
-warnings.filterwarnings('ignore')
-import logging
-logging.basicConfig()
 import pprint
 import validators
 
@@ -117,11 +112,11 @@ def ThumbC(imgI, Tsize, bgColor):
 #----------------------------------------------------------------------------------------------------------
 # Put Picasa/IPTC caption to the given file
 def iptcCaptionSet(fn, caption):
-  logging.disable(logging.CRITICAL)
   if (caption==""): caption = " "
   now = datetime.now()
   now = now.strftime("%Y%m%d")
   info = None
+  sys.stdout = open(os.devnull, 'w') # disable print to block warning msgs
   try:
      n = 1
      info = IPTCInfo(fn, force=True)
@@ -134,15 +129,16 @@ def iptcCaptionSet(fn, caption):
      n = 3
      info.save()
      os.remove(fn + "~")
+     sys.stdout = sys.__stdout__ # enable print
   except Exception, e:
     info  = None
+    sys.stdout = sys.__stdout__  # enable print
     print "[%s]" % (caption)
     print "iptcCaptionSet() failed to process %s - %d %s" % (fn, n, str(e))
   return
 #----------------------------------------------------------------------------------------------------------
 # Get Picasa/IPTC caption from the given file
 def iptcCaptionGet(fn):
-  logging.disable(logging.CRITICAL)
   caption = None
   info    = None
   try:
@@ -1150,14 +1146,11 @@ if (Rename):
    print "picman: stop"
    exit(0)
    
-logging.basicConfig(filename='picman.log', level=logging.CRITICAL)
-
 #----------------------------------------------------------------------------------------------------------
 if (toSetTime):
    print "picman: Set mod times for %d images: %s" % (len(List), "*")
    setTime(List)
    print "picman: Stop"
-   logging.shutdown()
    if (os.path.exists("picman.log")): os.remove("picman.log")
    exit(0)
     
@@ -1170,7 +1163,6 @@ if (len(Tsize)>0):
        ThumbC(imgI, Tsize[0], bgColor)
        if (len(Tsize)>1): ThumbC(imgI, Tsize[1], bgColor)
 
-logging.shutdown()
 if (os.path.exists("picman.log")): os.remove("picman.log")
 
 print "picman: Stop"
