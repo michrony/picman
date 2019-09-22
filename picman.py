@@ -47,9 +47,13 @@
 # Version 10/22/2018: process .*jpg files
 #                     Picasa index.html ===> index.bak
 # Version 12/17/2018: updated utf8()
-# Version 08/19/2019: added procGps()
+# Version 08/19/2019: begin enabling gps captions
 # Version 09/04/2019: disable IPTC warnings
-                      
+# Version 09/15/2019: gps captions ver 1: introduced *.gps.txt, *.gps,.htm desciptors
+# Version 09/21/2019: gps update / fix: -gpsn, -ghpsg, -gpsu
+#                     -mvt removed, use -mvd instead
+
+#----------------------------------------------------------------------------------------------------------
 import sys, os, glob, re, time, json
 import copy, uuid
 import shutil
@@ -110,53 +114,10 @@ def ThumbC(imgI, Tsize, bgColor):
     sys.exit()	
  return
 #----------------------------------------------------------------------------------------------------------
-# Put Picasa/IPTC caption to the given file
-def iptcCaptionSet(fn, caption):
-  if (caption==""): caption = " "
-  now = datetime.now()
-  now = now.strftime("%Y%m%d")
-  info = None
-  sys.stdout = open(os.devnull, 'w') # disable print to block warning msgs
-  try:
-     n = 1
-     info = IPTCInfo(fn, force=True)
-     n = 2
-     info.data['caption/abstract'] = caption
-     info.data['date created']     = now
-     info.data['writer/editor']    = "picman"
-     info.data['copyright notice'] = ""
-     #info.data['keywords']  = ""
-     n = 3
-     info.save()
-     os.remove(fn + "~")
-     sys.stdout = sys.__stdout__ # enable print
-  except Exception, e:
-    info  = None
-    sys.stdout = sys.__stdout__  # enable print
-    print "[%s]" % (caption)
-    print "iptcCaptionSet() failed to process %s - %d %s" % (fn, n, str(e))
-  return
-#----------------------------------------------------------------------------------------------------------
-# Get Picasa/IPTC caption from the given file
-def iptcCaptionGet(fn):
-  caption = None
-  info    = None
-  try:
-     info = IPTCInfo(fn, force=True)
-     caption = utf8(info.data['caption/abstract'])  
-  except Exception, e:
-    info = None
-    print "iptcCaptionGet() failed to open IPTC in %s - %s" % (fn, str(e))
-  if (caption==None or caption==""): caption = ""
-  caption = caption.strip()
-  if (caption==""): caption = " " # return blank instead of empty
-  #print "===>%s/%s" %(fn, caption)
-  return caption
-#----------------------------------------------------------------------------------------------------------
 # Try to get Picasa/IPTC captions for jpg's with empty comments in List
 def checkCaptions(List):
    for i in range(0, len(List)):
-       iptc = iptcCaptionGet(List[i][0])
+       iptc = iptcGet(List[i][0])[0]
        curr = List[i][1]
        # if (curr==""): curr = iptc  # use IPTC only if nothing was found in jpg comment 
        if (iptc!=" "): curr = iptc   # if there is IPTC data, use it
@@ -282,7 +243,7 @@ def JsondscFromText(dscname, MaxNPics, getimages):
  JsonDscProcs(fname, 0, getimages, None) # process new descriptor immediately
 #----------------------------------------------------------------------------------------------------------
 # Get comments from jpg files and their IPTC.Caption's 
-# Create json dscritor *.dscj.txt
+# Create json descritor *.dscj.txt
 def GetJpgComments(descname, List, MaxNPics, getimages):
 
  Res = []
@@ -383,7 +344,7 @@ def JsonRowProcs(row, getimages):
 
  for gr in groups:
    ncols = len(gr)-1
-   #print gr
+   gr = procGroup(gr)
    for el in gr:
       # prepare header and main rows     
       if (not el.endswith(".jpg")):
@@ -405,6 +366,10 @@ def JsonRowProcs(row, getimages):
  Res_view  = Res_view.replace("\n</tr>", "</tr>")
 
  return [Res_norm, Res_view]
+#----------------------------------------------------------------------------------------------------------------\
+def procGroup(L):
+ print "procGroup(): " + str(L)
+ return L
 #----------------------------------------------------------------------------------------------------------------\
 # Get json descriptor from the given file and return the dict
 def JsonDscGet(fname):
@@ -563,7 +528,7 @@ def JsondscPutComments(fname):
  IN     = IN[INkey]
 
  N = 0
- comment = "   "
+ comment = " "
  for row in IN:
    for fn in row:
      if (not fn.endswith(".jpg")):
@@ -574,9 +539,9 @@ def JsondscPutComments(fname):
        return
      cmd = "jhead -cl \"%s\" %s" % (comment, fn)
      os.popen(cmd)
-     iptcCaptionSet(fn, comment)
-     N   = N + 1
-     comment = "   "
+     iptcSet(fn, comment, None)
+     N = N + 1
+     comment = " "
 
  print "JsondscPutComments(): %s images processed" % (N)
 
@@ -690,7 +655,6 @@ def procPicasaIndex(fname):
 # Rename files in List to: prefix.nnn[.date].ext
 # For prefix = "": replace non-alphanum characters by dots.
 def rename(addDate, prefix, List):
- 
  fname = ""
  if (".htm" in List[0]): fname = List[0] 
  if (fname!=""):  
@@ -728,7 +692,7 @@ def rename(addDate, prefix, List):
        
     if (prefix!=""): name = el_ + "%s.%.03d%s.%s" % (prefix.lower(), N, now, ext.lower())
     else:            name = (re.sub('[^a-zA-Z0-9]', '.', el)).lower()
-    if (name.startswith(".")): name = "0" + name                  
+    if (name.startswith(".")): name = "0" + name
     #print "=>%s: %s*%s" % (prefix, name, el)
         
     if (name!=el and os.path.exists(name)): 
@@ -776,87 +740,81 @@ def rename(addDate, prefix, List):
 
  return N
 #----------------------------------------------------------------------------------------------------------
-# Rename files in List to: exif_time.old_name...jpg
-# 
-def renameExifTime(List):
- List_ = []
- for f in List:
-    if (f.endswith("_t.jpg")): 
-        os.remove(f)
-        continue
-    # skip previously processed files    
-    if (re.match(r"[0-9]{8}\.[0-9]{6}\..*", f) and f.endswith("...jpg")): continue
-    List_.append(f)
- List = List_
+# Group is a list, its head is caption, tail is captioned images
+# Find the first image if any with gps info and make caption a hyperlink to Google Maps.
+def procGroup(gr):
+ if (len(gr)<2): 
+    print "procGroup(): wrong group " + str(gr)
+    return
  
- if (len(List)==0):
-    print "renameExifTime(): nothing to process"
-    return 0
- print "renameExifTime(): %d items to process" % (len(List))
+ if ("empty" in gpsDesc): iniGpsDesc()
+ if ("empty" in gpsDesc): return
 
- for fn in List: 
-       # try get DateTimeOriginal from EXIF
-       t = ""
-       f = open(fn, "rb") # we need to open and close this file explicitly!
-       im = Image.open(f)
-       #if hasattr(im, '_getexif'):
-       try:    
-            exifdata = im._getexif()
-            if (exifdata!=None and 36867 in exifdata): 
-               #print exifdata
-               t = exifdata[36867] # DateTimeOriginal
-            if (int(t[:2])>20 or int(t[:2])<19): t = "" 
-       except: pass
-       f.close()
-       if (t==""):
-           print "renameExifTime(): %s - no exif time" % (fn)
-           continue
-
-       t = t.replace(":", "")
-       t = t.replace(" ", ".")
-       fnNew = t + "." + fn[:16].lower()
-       if (not fnNew.endswith(".jpg")): fnNew = fnNew + ".jpg"
-       fnNew = fnNew.replace(".jpg", "...jpg")
-       fnNew = (re.sub('[^a-zA-Z0-9]', '.', fnNew))
-       # fnNew = fnNew.replace("_", ".")
-       #print fnNew
-       
-       if os.path.exists(fnNew): 
-          os.unlink(fnNew)
-          print "renameExifTime(): removed %s" % (fnNew)
-       
-       print "renameExifTime(): %s=>%s" % (fn, fnNew)
-       try: 
-          os.rename(fn, fnNew)
-       except:   
-          print "renameExifTime(): %s=>%s failed" % (fn, fnNew)
+ (head, tail) = (gr[0], gr[1:])
+ found = ""
+ for el in tail:
+     if (el in gpsDesc):
+        found = gpsDesc[el]
+        break
+ if (found==""): return gr
  
- return len(List)
+ fmatGooMaps = "https://www.google.com/maps/?q=%s"
+ fmatA       = "<a target=win_link href=%s>%s</a>"
+ 
+ link = found
+ if (not link.startswith("http")): link = fmatGooMaps % (link)
+ 
+ if (head.strip()==""): head = "map"
+ head = fmatA % (link, head)
+ 
+ gr[0] = head
+ #print "dbg " + str(gr)
+ return gr
 #----------------------------------------------------------------------------------------------------------
-# Generate .*.gps.htm with links to Google maps using csv files from GPS Logger. dst is offset for Zulu
-def procGps(dst):
+# Initialize gpsDesc for procGroup()
+gpsDesc = {"empty": 1}
+def iniGpsDesc(): 
+ global gpsDesc
+ desc = getGpsDesc()
+ if (desc==None or not "dst" in desc or not "root" in desc): return
+  
+ desc = desc["root"]
+ for item in desc:
+     if (item[-1]=="y"): 
+        gpsDesc[item[1]] = item[3] 
+ 
+ if (len(gpsDesc.keys())>1): del gpsDesc["empty"]
+ #print "iniGpsDesc()" + gpsDesc
+ print "iniGpsDesc() %d items in gpsDesc" % (len(gpsDesc.keys()))
+ 
+ return
+#----------------------------------------------------------------------------------------------------------
+# Create json descriptor *.gps.txt with links to Google maps. Use csv files from GPS Logger. 
+# dst - offset for Zulu, Ljpg - list of jpg's in this dir
+def crGpsDesc(dst, Ljpg):
  if (dst==None): return
  
  Lcsv = glob.glob("*.csv")
  if (len(Lcsv)==0):
-    print "procGps(): nothing to process"
+    print "crGpsDesc(): no csv to process"
     return
-    
- print "procGps(): dst=" + str(dst)
 
- Ljpg = glob.glob("2[0-1][0-9]*.[0-9]*...jpg") 
- if (len(Ljpg)==0):
-    print "procGps(): no images found"
-    return
-    
- maxDelta = 10*60 # max reasonable difference between image date and gps date
+ print "crGpsDesc(): dst=" + str(dst)
+
  res = []
- # add items related to images
- for line in Ljpg:
-         tmp = line.split(".")
-         if (len(tmp)<3): continue
-         res.append([tmp[0] + "." + tmp[1], None, None, line, "jpg"])
+ # add image items
+ for item in Ljpg:
+         if (item.endswith("_t.jpg")): continue
+         t = getExiTime(item)
+         if (t==""): continue
+         t = t.replace(" ", ".")
+         t = t.replace(":", "")
+         res.append([t, None, None, item, "jpg"])
 
+ if (len(Ljpg)==0):
+    print "crGpsDesc(): no jpg to process"
+    return
+         
  for fn in Lcsv:
      curr = [] 
      try:
@@ -864,19 +822,19 @@ def procGps(dst):
             reader = csv.reader(f)
             for row in reader: curr.append(row)
      except Exception, e:
-            print "procGps(): Failed to read %s - %s" % (fn, str(e))
+            print "crGpsDesc(): Failed to read %s - %s" % (fn, str(e))
             continue
 
      if (len(curr)<2 or len(curr[0])<3 or curr[0][0]!="time" or curr[0][1]!="lat" or curr[0][2]!="lon"):
-        print "procGps(): Wrong %s" % (fn)
+        print "crGpsDesc(): Wrong %s" % (fn)
         continue
      curr.pop(0)
 
-     print "procGps(): Process %s - %d lines" % (fn, len(curr))
+     print "crGpsDesc(): %s processed, %d lines" % (fn, len(curr))
      # Prepare res with dst-adjusted dates
      for line in curr:
          if (len(line)<3):
-             print "procGps(): Wrong %s - line too short" % (fn)
+             print "crGpsDesc(): Wrong %s - line too short" % (fn)
              break
          (date, lat, lon) = (line[0], line[1], line[2])
          date_ = date.replace("Z", "UTC")
@@ -888,7 +846,7 @@ def procGps(dst):
          res.append([date1, lat, lon, date2, "gps"])
      
  res.sort()
- print "procGps(): total processed items: %d" % (len(res))
+ print "crGpsDesc(): total processed items: %d" % (len(res))
  for i in range(0, len(res)): # mark gps items - neighbours of jpg's
           if (res[i][4]!="jpg"): continue
           currDate = datetime.strptime(res[i][0], "%Y%m%d.%H%M%S")
@@ -906,49 +864,39 @@ def procGps(dst):
           if (left>=0):  
               res[i][1] = left
               leftDate  = datetime.strptime(res[left][0], "%Y%m%d.%H%M%S")
-              res[i][2] = (currDate-leftDate).total_seconds()
+              res[i][2] = int((currDate-leftDate).total_seconds())
           if (right>=0): 
               res[i][1] = right
               rightDate = datetime.strptime(res[right][0], "%Y%m%d.%H%M%S")
-              res[i][2] = (rightDate-currDate).total_seconds()
-          
- # prepare html
+              res[i][2] = int((rightDate-currDate).total_seconds())
 
- Njpg = 0
- html = "<html>\n<body>\n"
- html = html + "<h3>Geolocated Images</h3>\n"
- html = html + "GPS info from: <a target=win00 href=\"https://play.google.com/store/apps/details?id=com.mendhak.gpslogger&hl=en_US\">GPS Logger for Android</a><br/>\n" 
- html = html + "Time zone: UTC%+d<br/>\n" % (dst) 
- html = html + "Images: %d<br/>\n" % (len(Ljpg)) 
- html = html + "Use Map links to locate images on Google Maps\n" + "<hr>\n"
- 
- fmatLink = "Map: <a style=\"color:black\" target=win00 href=\"https://www.google.com/maps/?q=%s,%s\">%s</a>"
- fmatImg  = "<img height=480 src=\"./%s\">"
- # pprint.pprint(res)
+ nimg = 0
+ desc = []
  for line in res:
            if (line[4]!="jpg"): continue
-           img = fmatImg % (line[3])
-           t = line[3]
+           nimg = nimg + 1
+           #print line
+           t = line[0]
            (Y, M, D, h, m, s) = (t[0:4], t[4:6], t[6:8], t[9:11], t[11:13], t[13:15])
            date = Y + "-" + M + "-" + D + " " + h + ":" + m + ":" + s
            gpsLine = res[line[1]]
-           gpsLink = fmatLink % (gpsLine[1], gpsLine[2], gpsLine[3])
-           if (line[2]>maxDelta): gpsLink = gpsLink.replace("color:black", "color:red")
-           #print "dbg: date=%s delta=%d" % (date, line[2])
-           html = html + "<p title=\"" + line[3] + "\">" + "Image Date: " + date + "\n<br/>" + gpsLink + "<br/>\n"
-           html = html + img + "</p>\n"
-           Njpg = Njpg + 1
- 
- html = html + "</body>\n</html>"
+           desc.append([nimg, line[3], date, gpsLine[1] + "," + gpsLine[2], line[2], "y"])
+
+ desc = {"dst": dst, "root": desc} 
+ desc = json.dumps(desc, indent=1, sort_keys=True) 
 
  fn = os.getcwd().replace("\\", "/").replace("_", "")
- fn = fn.split("/")[-1] + ".gps.htm"
- #if (os.path.exists(fn)): os.remove(fn)
- f = open(fn, "w")
- f.write(html)
- f.close()
-
- print "procGps(): %d images processed, %s generated" % (Njpg, fn)
+ fn = fn.split("/")[-1] + ".gps.txt"
+ 
+ try:
+   f = open(fn, "w")
+   f.write(desc)
+   f.close()
+ except Exception as e:
+   print "crGpsDesc(): failed to write %s - %s" % (fn, str(e))
+   return
+   
+ print "crGpsDesc(): %s created, %d images processed" % (fn, nimg)
 
  return
 #--------------------------------------------------------------------------------------
@@ -961,35 +909,252 @@ def findRightCsv(L, ind):
  for i in range(ind+1, len(L)):
     if (L[i][4].startswith("gps")): return i
  return -1 
-#----------------------------------------------------------------------------------------------------------
+#--------------------------------------------------------------------------------------
+# Create *.gps.htm from json descriptor *.gps.txt
+def crGpsHtm():
+ desc = getGpsDesc()
+ if (desc==None): return
+ if (not "dst" in desc or not "root" in desc):
+   print "crGpsDesc(): wrong json in %s" % (fn, str(e))
+   return
+
+ # prepare html
+ maxDelta = 10*60 # max difference between image time and closest gps tick, seconds
+ dst = desc["dst"]
+ root = desc["root"]
+
+ html = '''
+ <html>
+ <head>
+ <style>
+ p{border-style:solid; border-width:2; margin:5; padding:5; display:table}
+ img{height:480}
+ table{width:100%}
+ </style>
+ </head>
+ <body>
+ <h3>Geolocated Images</h3>
+ GPS info from: <a target=win00 href=https://play.google.com/store/apps/details?id=com.mendhak.gpslogger&hl=en_US>GPS Logger for Android</a>
+ <br/>
+ Time zone: UTC[dst] 
+ <br/>
+ Images: [nimg]
+ <br/>
+ Use <u>map</u> links to locate images on Google Maps.
+ '''
+ html = html.replace("[dst]", "%+d" % dst)
+ html = html.replace("[nimg]", str(len(root)))
+ 
+ fmatP = '''
+ <p title="%s">
+ <table><tr>
+  <td><b>%s</b></td>
+  <td align=center>date: %s</td> 
+  <td align=left>delta: %s sec</td> 
+  <td align=right>%s</td>
+ </tr></table>
+ <img src=%s>
+ </p>'''
+ fmatLink = '''<a style="color:black" target=win00 href=https://www.google.com/maps/?q=%s>map</a>'''
+ 
+ for item in root:
+           (num, img, date, coord, delta, active) = (item[0], item[1], item[2], item[3], item[4], "y"==item[5])
+           num = "%03d" % (num)
+           gpsLink = fmatLink % (coord)
+           if (delta>maxDelta): gpsLink = gpsLink.replace("color:black", "color:red")
+           if (not active): gpsLink = ""
+           p = fmatP % (img, num, date, delta, gpsLink, img)
+           html = html + p
+ html = html + "</body>\n</html>"   
+
+ fn = os.getcwd().replace("\\", "/").replace("_", "")
+ fn = fn.split("/")[-1] + ".gps.htm"
+ 
+ try:
+   f = open(fn, "w")
+   f.write(html)
+   f.close()
+ except Exception as e:
+   print "crGpsHtm(): failed to write %s" % (fn)
+   return
+   
+ print "crGpsHtm(): %s created" % (fn)
+ return
+#--------------------------------------------------------------------------------------
+# Create json descriptor *.gps.txt from IPTC in *.jpg
+def crGpsDescFromJpg(L):
+ root = []
+ dst  = ""
+ nimg = 0
+ for fn in L:
+   if (not fn.endswith(".jpg") or fn.endswith("_t.jpg")): continue
+   (tmp, spinsJ) = iptcGet(fn)
+   if (spinsJ.strip()==""):
+      print "crGpsDescFromJpg(): %s - can't get IPTC info"
+      continue
+   try:
+      spins = json.loads(spinsJ)
+   except Exception as e:
+      print "crGpsDescFromJpg(): %s - wrong JSON" % (fn)
+      continue
+   if (not "dst" in spins or not "root" in spins):
+      print "crGpsDescFromJpg(): %s - wrong spins %s" % (fn, str(spins))
+      continue
+   if (dst!="" and spins["dst"]!=dst):
+      print "crGpsDescFromJpg(): %s - wrong spins %s" % (fn, str(spins))
+      continue
+   dst  = spins["dst"]
+   nimg = nimg + 1
+   root.append([nimg] + [fn] + spins["root"])
+   
+ desc  = {"dst": dst, "root": root}
+ descJ = json.dumps(desc, indent=1, sort_keys=True)
+ #print descJ
+
+ fn = os.getcwd().replace("\\", "/").replace("_", "")
+ fn = fn.split("/")[-1] + ".gps.txt"
+ 
+ try:
+   f = open(fn, "w")
+   f.write(descJ)
+   f.close()
+ except Exception as e:
+   print "crGpsDescFromJpg(): failed to write %s" % (fn)
+   return
+   
+ print "crGpsDescFromJpg(): %s created, %d images processed" % (fn, nimg)
+  
+ return
+#--------------------------------------------------------------------------------------
+# Get gps descriptor from file *.gps.txt
+def getGpsDesc():
+ fn = os.getcwd().replace("\\", "/").replace("_", "")
+ fn = fn.split("/")[-1] + ".gps.txt"
+ if (not os.path.exists(fn)): 
+   print "getGpsDesc(): %s does not exist" % (fn)
+   return None
+ try:
+   f = open(fn, "r")
+   desc = f.read()
+   f.close()
+   desc = json.loads(desc)
+ except Exception as e:
+   print "getGpsDesc(): failed to get json from %s" % (fn, str(e))
+   return None
+
+ return desc   
+#--------------------------------------------------------------------------------------
+# Save *.gps.txt to proper jpg's
+def gpsDesc2jpg():
+ desc = getGpsDesc()
+ if (desc==None): return 
+ if (not "dst" in desc or not "root" in desc):
+   print "gpsDesc2jpg(): wrong json in %s" % (fn, str(e))
+   return
+
+ (dst, root) = (desc["dst"], desc["root"])
+ for item in root:
+   fn = item[1]
+   out = {"dst": dst, "root": item[2:]}
+   out = json.dumps(out)
+   #print out
+   iptcSet(fn, None, out)
+   print "gpsDesc2jpg(): processed %s" % (fn)
+   
+ return
+#--------------------------------------------------------------------------------------
 # For files in List, set mod, access times equal to creation time
 def setTime(List):
-
  for f in List: 
        tc = os.path.getctime(f)
        ta = os.path.getatime(f)
        t = min(tc, ta)
        #print "=>tc=%s ta=%s t=%s" % (tc, ta, t)
+       t_ = getExiTime(f)
+       try:
+          t_ = time.strptime(t_, "%Y:%m:%d %H:%M:%S") 
+          t_ = time.mktime(t_)
+       except:
+          print "setTime(): %s - ignore wrong DateTimeOriginal" % (f)
+       if (t_!=""): t = t_   
+       os.utime(f, (t, t)) # set mod,access times   
 
-       # try get DateTimeOriginal from EXIF
-       im = Image.open(f)
-       if hasattr(im, '_getexif'):
-          try:    exifdata = im._getexif()
-          except: print "picman: %s wrong EXIF" % f 
-          if (exifdata!=None and 36867 in exifdata): 
-            #print exifdata
-            tc_ = exifdata[36867] # DateTimeOriginal
-            #print "%s %s" % (f, tc)
-            try:
-              tc__ = time.strptime(tc_, "%Y:%m:%d %H:%M:%S") 
-              tc__ = time.mktime(tc__) 
-              t    = tc__
-            except: print "picman: %s ignore wrong DateTimeOriginal %s" % (f, tc_)
-
-       #print t
-       os.utime(f, (t, t)) # set mod,access times
  return
+#--------------------------------------------------------------------------------------
+# Get DateTimeOriginal from EXIF
+def getExiTime(fn):
+       t = ""
+       f = open(fn, "rb") # we need to open and close this file explicitly!
+       im = Image.open(f)
+       try:    
+            exifdata = im._getexif()
+            if (exifdata!=None and 36867 in exifdata): 
+               #print exifdata
+               t = exifdata[36867] # DateTimeOriginal
+            if (int(t[:2])>20 or int(t[:2])<19): t = "" 
+       except: pass
+       f.close()
+       return t
 #----------------------------------------------------------------------------------------------------------
+# Get Picasa/IPTC caption, spec instr from the given file
+def iptcGet(fn):
+  capt  = None
+  spins = None
+  info  = None
+  sys.stdout = open(os.devnull, 'w') # disable print to block warning msgs
+  try:
+     info  = IPTCInfo(fn, force=True)
+     capt  = info.data['caption/abstract']
+     if (not(capt)): capt = " "
+     spins = info.data['special instructions']
+     if (not(spins)): spins = " "
+     sys.stdout = sys.__stdout__ # enable print
+  except Exception, e:
+     sys.stdout = sys.__stdout__  # enable print
+     print "iptcGet() failed to open IPTC in %s - %s" % (fn, str(e))
+     return [" ", " "]
+  
+  capt = capt.strip()
+  if (capt==""): capt = " "
+  capt = utf8(capt)
+  spins = spins.strip()
+  if (spins==""): spins = " "
+  spins = utf8(spins)
+  #print "===>%s/%s" %(fn, capt)
+  return [capt, spins]
+#----------------------------------------------------------------------------------------------------------
+# Put Picasa/IPTC caption and/or special instruction to the given jpg file. 
+#     None means don't put this field.
+def iptcSet(fn, capt, spins):
+  if (capt==None and spins==None): return
+  
+  if (capt==""):  capt  = " "
+  if (spins==""): spins = " "
+  now = datetime.now()
+  now = now.strftime("%Y%m%d%H%M%S")
+  info = None
+  sys.stdout = open(os.devnull, 'w') # disable print to block warning msgs
+  try:
+     n = 1
+     info = IPTCInfo(fn, force=True)
+     n = 2
+     if (capt):  info.data['caption/abstract'] = capt
+     if (spins): info.data['special instructions'] = spins
+     info.data['date created']     = now
+     info.data['writer/editor']    = "picman"
+     #info.data['copyright notice'] = ""
+     #info.data['keywords']  = ""
+     n = 3
+     info.save()
+     os.remove(fn + "~")
+     sys.stdout = sys.__stdout__ # enable print
+  except Exception, e:
+    info  = None
+    sys.stdout = sys.__stdout__  # enable print
+    #print "[%s]" % (capt)
+    print "iptcSet() failed to process %s - %d %s" % (fn, n, str(e))
+  return
+#----------------------------------------------------------------------------------------------------
 # desc can be info.txt or dscj.txt
 # Find matching descriptor in the current dir or create a new one
 def setDesc(desc):
@@ -1015,10 +1180,9 @@ def setDesc(desc):
 
 notes = '''
 Notes:
-   (1) xxx.dscj.txt should be always present in curr dir.
-   It is used for jpg renaming and keeps JSON descriptor.
-   (2) Image captions are kept in jpg comment fields or in IPTC. 
-   If IPTC is empty, jpg comment is used.
+   (1) *.dscj.txt should be always present in curr dir.
+       It is used for jpg renaming and keeps JSON descriptor.
+       If IPTC is empty, jpg comment is used.
 '''
 
 parser = argparse.ArgumentParser(description=notes)
@@ -1026,7 +1190,6 @@ group  = parser.add_mutually_exclusive_group(required=True)
 group.add_argument('-mv',   action="store_true", help="Rename *.jpg files to prefix.nnn.ext")
 group.add_argument('-mvc',  action="store_true", help="Rename *.jpg files to lower case, replace non-alphanum characters by dots")
 group.add_argument('-mvd',  action="store_true", help="Rename *.jpg files to prefix.nnn.date.ext")
-group.add_argument('-mvt',  action="store_true", help="Rename *.jpg files using EXIF time")
 group.add_argument('-T',    action="store_true", help="Set file mod time from its EXIF info or creation time if no EXIF")
 group.add_argument('-tS',   action="store_true", help="Create square thumbs: size 120,240")
 group.add_argument('-ts',   type=int, help="Create square thumbs with given size")
@@ -1036,11 +1199,15 @@ group.add_argument('-ju',   action="store_true", help="Update existing descripto
 group.add_argument('-jue',  action="store_true", help="Same as -ju plus create envelope around json in *.dscj.txt")
 group.add_argument('-jun',  action="store_true", help="Recreate descriptor *.dscj.txt, renumber images") 
 group.add_argument('-jp',   action="store_true", help="Put comments from the given *.dscj.txt to jpg's")
+group.add_argument('-gpsn', type=int, help="Create new descriptors *.gps.txt *.gps.htm from Android *.csv files. The value is dst offset for Zulu")
+group.add_argument('-gpsu', action="store_true", help="Update descriptors *.gps.txt *.and gps.htm, put *.gps.txt info to image files")
+group.add_argument('-gpsg', action="store_true", help="Create descriptors *.gps.txt *.and gps.htm from *.jpg")
+
 parser.add_argument('-jg',  action="store_true", help="Try copying image files specified in *.dscj.txt from ./bak to this dir") 
 parser.add_argument('-pi',  action="store_true", help="Use Picasa-generated index") 
 parser.add_argument("-tbg", type=str, help="Background color code for thumbs. Default is #c0c0c0")
-parser.add_argument('-gps', type=int, help="Generate .url's for Google maps from GPS Logger for Android csv files. Value is dst offset for Zulu")
 #parser.add_argument("path", type = str, help="files to process")
+
 args = vars(parser.parse_args())
 
 desc = setDesc("dscj.txt")  
@@ -1050,7 +1217,6 @@ desc = desc.replace(".dscj.txt", "")
 
 toSetTime  = args["T"]
 Rename     = args["mv"] or args["mvd"] or args["mvc"]
-RenameExifTime = args["mvt"]
 addDate    = args["mvd"]
 
 Tsize     = []
@@ -1078,7 +1244,7 @@ pi        = args["pi"]
 
 jnewMaxNPics = 6
 
-List = glob.glob(".*jpg") + glob.glob("*")
+List = glob.glob("*") # + glob.glob(".*jpg")  
 if (pi):
    List = [el for el in List if ("index.htm" in el.lower())]
 else: 
@@ -1089,15 +1255,13 @@ if (len(List)==0 and not jproc and not jnewtext):
    print "picman: Nothing to process"
    print help
    exit(0)
-
 #----------------------------------------------------------------------------------------------------------
 if (jnew):
    print "picman: prepare new json descriptor %s.dscj.txt: %s" % (desc, "*")
-   N      = GetJpgComments(desc, List, jnewMaxNPics, getimages)
+   N = GetJpgComments(desc, List, jnewMaxNPics, getimages)
    print "picman: %d processed images" % N
    print "picman: stop"
    exit(0)
-
 #----------------------------------------------------------------------------------------------------------
 if (jnewtext):
    fname = desc
@@ -1108,7 +1272,6 @@ if (jnewtext):
    JsondscFromText(desc, jnewMaxNPics, getimages)
    print "picman: stop"
    exit(0)
-
 #----------------------------------------------------------------------------------------------------------
 if (jproc or jprocput or jnum):
     Pics = []
@@ -1129,15 +1292,23 @@ if (jproc or jprocput or jnum):
         exit(0)
     List  = Pics # create new thumbs for pics in List
     Tsize = [120, 240]
-
 #----------------------------------------------------------------------------------------------------------
-if (RenameExifTime):
-   print "picman: rename images by creation time"
-   print "picman: %d processed images" % renameExifTime(List)
-   procGps(args["gps"])
+if (args["gpsn"]):
+   crGpsDesc(args["gpsn"], List)
+   crGpsHtm()
    print "picman: stop"
    exit(0)
-    
+#----------------------------------------------------------------------------------------------------------
+if (args["gpsu"]):
+   gpsDesc2jpg()
+   print "picman: stop"
+   exit(0)
+#----------------------------------------------------------------------------------------------------------
+if (args["gpsg"]):
+   crGpsDescFromJpg(List)
+   crGpsHtm()
+   print "picman: stop"
+   exit(0)
 #----------------------------------------------------------------------------------------------------------
 if (Rename):
    print "picman: rename images"
@@ -1151,9 +1322,7 @@ if (toSetTime):
    print "picman: Set mod times for %d images: %s" % (len(List), "*")
    setTime(List)
    print "picman: Stop"
-   if (os.path.exists("picman.log")): os.remove("picman.log")
    exit(0)
-    
 #----------------------------------------------------------------------------------------------------------
 if (len(Tsize)>0): 
    print "picman: Prepare thumbs: Tsize=%s bgColor=%s %s" % (str(Tsize), bgColor, "*")
