@@ -52,6 +52,8 @@
 # Version 09/15/2019: gps captions ver 1: introduced *.gps.txt, *.gps,.htm desciptors
 # Version 09/21/2019: gps update / fix: -gpsn, -ghpsg, -gpsu
 #                     -mvt removed, use -mvd instead
+# Version 10/06/2019: added -mvt using jhead. It is needed to merge images coming from multiple caneras
+#                     added rmGpsDesc() to remove gps descriptors after image rename  
 
 #----------------------------------------------------------------------------------------------------------
 import sys, os, glob, re, time, json
@@ -757,16 +759,16 @@ def procGroup(gr):
         found = gpsDesc[el]
         break
  if (found==""): return gr
- 
+
  fmatGooMaps = "https://www.google.com/maps/?q=%s"
  fmatA       = "<a target=win_link href=%s>%s</a>"
- 
+
  link = found
  if (not link.startswith("http")): link = fmatGooMaps % (link)
- 
+
  if (head.strip()==""): head = "map"
  head = fmatA % (link, head)
- 
+
  gr[0] = head
  #print "dbg " + str(gr)
  return gr
@@ -782,11 +784,11 @@ def iniGpsDesc():
  for item in desc:
      if (item[-1]=="y"): 
         gpsDesc[item[1]] = item[3] 
- 
+
  if (len(gpsDesc.keys())>1): del gpsDesc["empty"]
  #print "iniGpsDesc()" + gpsDesc
  print "iniGpsDesc() %d items in gpsDesc" % (len(gpsDesc.keys()))
- 
+
  return
 #----------------------------------------------------------------------------------------------------------
 # Create json descriptor *.gps.txt with links to Google maps. Use csv files from GPS Logger. 
@@ -928,7 +930,7 @@ def crGpsHtm():
  <head>
  <style>
  p{border-style:solid; border-width:2; margin:5; padding:5; display:table}
- img{height:480}
+ img{width:640}
  table{width:100%}
  </style>
  </head>
@@ -1026,6 +1028,17 @@ def crGpsDescFromJpg(L):
   
  return
 #--------------------------------------------------------------------------------------
+# remove gps descriptors if they exist
+def rmGpsDesc():
+ fn = os.getcwd().replace("\\", "/").replace("_", "")
+ fn_ = fn.split("/")[-1] + ".gps.txt"
+ if (os.path.exists(fn_)): 
+   os.remove(fn_)
+ fn_ = fn.split("/")[-1] + ".gps.htm"
+ if (os.path.exists(fn_)): 
+   os.remove(fn_)
+ return
+#--------------------------------------------------------------------------------------
 # Get gps descriptor from file *.gps.txt
 def getGpsDesc():
  fn = os.getcwd().replace("\\", "/").replace("_", "")
@@ -1085,8 +1098,8 @@ def setTime(List):
 def getExiTime(fn):
        t = ""
        f = open(fn, "rb") # we need to open and close this file explicitly!
-       im = Image.open(f)
-       try:    
+       try:
+            im = Image.open(f)
             exifdata = im._getexif()
             if (exifdata!=None and 36867 in exifdata): 
                #print exifdata
@@ -1189,6 +1202,7 @@ parser = argparse.ArgumentParser(description=notes)
 group  = parser.add_mutually_exclusive_group(required=True)
 group.add_argument('-mv',   action="store_true", help="Rename *.jpg files to prefix.nnn.ext")
 group.add_argument('-mvc',  action="store_true", help="Rename *.jpg files to lower case, replace non-alphanum characters by dots")
+group.add_argument('-mvt',  action="store_true", help="Rename *.jpg files to yyyy.mm.dd.hhmmss.jpg")
 group.add_argument('-mvd',  action="store_true", help="Rename *.jpg files to prefix.nnn.date.ext")
 group.add_argument('-T',    action="store_true", help="Set file mod time from its EXIF info or creation time if no EXIF")
 group.add_argument('-tS',   action="store_true", help="Create square thumbs: size 120,240")
@@ -1310,13 +1324,22 @@ if (args["gpsg"]):
    print "picman: stop"
    exit(0)
 #----------------------------------------------------------------------------------------------------------
+if (args["mvt"]):
+   cmd = "jhead -n%Y.%m.%d.%H%M%S *.jpg"
+   os.system(cmd)
+   rmGpsDesc()
+   print "picman: stop"
+   exit(0)
+
+#----------------------------------------------------------------------------------------------------------
 if (Rename):
    print "picman: rename images"
    if (args["mvc"]): desc = "";
    print "picman: %d processed images" % rename(addDate, desc, List)
+   rmGpsDesc()
    print "picman: stop"
    exit(0)
-   
+
 #----------------------------------------------------------------------------------------------------------
 if (toSetTime):
    print "picman: Set mod times for %d images: %s" % (len(List), "*")
