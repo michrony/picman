@@ -916,8 +916,9 @@ def findRightCsv(L, ind):
 def crGpsHtm():
  desc = getGpsDesc()
  if (desc==None): return
- if (not "dst" in desc or not "root" in desc):
-   print "crGpsDesc(): wrong json in %s" % (fn, str(e))
+ 
+ if (not "dst" in desc or desc["dst"]=="" or not "root" in desc):
+   print "crGpsDesc(): can't create gps.htm descriptor"
    return
 
  # prepare html
@@ -944,6 +945,7 @@ def crGpsHtm():
  <br/>
  Use <u>map</u> links to locate images on Google Maps.
  '''
+
  html = html.replace("[dst]", "%+d" % dst)
  html = html.replace("[nimg]", str(len(root)))
  
@@ -992,7 +994,7 @@ def crGpsDescFromJpg(L):
    if (not fn.endswith(".jpg") or fn.endswith("_t.jpg")): continue
    (tmp, spinsJ) = iptcGet(fn)
    if (spinsJ.strip()==""):
-      print "crGpsDescFromJpg(): %s - can't get IPTC info"
+      print "crGpsDescFromJpg(): %s - can't get IPTC info" % (fn)
       continue
    try:
       spins = json.loads(spinsJ)
@@ -1015,6 +1017,9 @@ def crGpsDescFromJpg(L):
 
  fn = os.getcwd().replace("\\", "/").replace("_", "")
  fn = fn.split("/")[-1] + ".gps.txt"
+ if (not root):
+   print "crGpsDescFromJpg(): can't create %s with empty root" % (fn)
+   return
  
  try:
    f = open(fn, "w")
