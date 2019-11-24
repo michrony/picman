@@ -49,11 +49,12 @@
 # Version 12/17/2018: updated utf8()
 # Version 08/19/2019: begin enabling gps captions
 # Version 09/04/2019: disable IPTC warnings
-# Version 09/15/2019: gps captions ver 1: introduced *.gps.txt, *.gps,.htm desciptors
+# Version 09/15/2019: gps captions ver 1: introduced *.gps.txt, *.gps,.htm descriptors
 # Version 09/21/2019: gps update / fix: -gpsn, -ghpsg, -gpsu
 #                     -mvt removed, use -mvd instead
-# Version 10/06/2019: added -mvt using jhead. It is needed to merge images coming from multiple caneras
-#                     added rmGpsDesc() to remove gps descriptors after image rename  
+# Version 10/06/2019: added -mvt using jhead. It is needed to merge images coming from multiple cameras
+#                     added rmGpsDesc() to remove gps descriptors after image rename
+# Version 11/23/2019: use only 240 thumbs
 
 #----------------------------------------------------------------------------------------------------------
 import sys, os, glob, re, time, json
@@ -333,7 +334,7 @@ def JsonRowProcs(row, getimages):
  # Prepare HTML table for this JSON row
  cell_size = 120 
  anormfmt  = "<a target=win_link href=./images/%s.jpg><img class=th_small src=./images/%s_t.jpg><span><img src=./images/%s__t.jpg></span></a>"
- aviewfmt  = "<a target=win_link href=./%s.jpg><img class=th_small src=./%s_t.jpg><span><img src=./%s__t.jpg></span></a>"
+ aviewfmt  = "<a target=win_link href=./%s.jpg><img class=th_small src=./%s__t.jpg><span><img src=./%s__t.jpg></span></a>"
  tdheadfmt = "<td id=tdc colspan=%s width=%s>%s</td>\n"
  tdmainfmt = "<td id=tdi><div class=th_big>%s</div></td>\n"
  trfmt     = "<tr>%s</tr>\n"
@@ -347,6 +348,7 @@ def JsonRowProcs(row, getimages):
  for gr in groups:
    ncols = len(gr)-1
    gr = procGroup(gr)
+   if (not gr): continue
    for el in gr:
       # prepare header and main rows     
       if (not el.endswith(".jpg")):
@@ -368,10 +370,6 @@ def JsonRowProcs(row, getimages):
  Res_view  = Res_view.replace("\n</tr>", "</tr>")
 
  return [Res_norm, Res_view]
-#----------------------------------------------------------------------------------------------------------------\
-def procGroup(L):
- print "procGroup(): " + str(L)
- return L
 #----------------------------------------------------------------------------------------------------------------\
 # Get json descriptor from the given file and return the dict
 def JsonDscGet(fname):
@@ -747,10 +745,10 @@ def rename(addDate, prefix, List):
 def procGroup(gr):
  if (len(gr)<2): 
     print "procGroup(): wrong group " + str(gr)
-    return
+    return gr
  
  if ("empty" in gpsDesc): iniGpsDesc()
- if ("empty" in gpsDesc): return
+ if ("empty" in gpsDesc): return gr
 
  (head, tail) = (gr[0], gr[1:])
  found = ""
@@ -1049,7 +1047,7 @@ def getGpsDesc():
  fn = os.getcwd().replace("\\", "/").replace("_", "")
  fn = fn.split("/")[-1] + ".gps.txt"
  if (not os.path.exists(fn)): 
-   print "getGpsDesc(): %s does not exist" % (fn)
+   #print "getGpsDesc(): %s does not exist" % (fn)
    return None
  try:
    f = open(fn, "r")
@@ -1210,7 +1208,7 @@ group.add_argument('-mvc',  action="store_true", help="Rename *.jpg files to low
 group.add_argument('-mvt',  action="store_true", help="Rename *.jpg files to yyyy.mm.dd.hhmmss.jpg")
 group.add_argument('-mvd',  action="store_true", help="Rename *.jpg files to prefix.nnn.date.ext")
 group.add_argument('-T',    action="store_true", help="Set file mod time from its EXIF info or creation time if no EXIF")
-group.add_argument('-tS',   action="store_true", help="Create square thumbs: size 120,240")
+group.add_argument('-tS',   action="store_true", help="Create square thumbs: size 240")
 group.add_argument('-ts',   type=int, help="Create square thumbs with given size")
 group.add_argument('-jn',   action="store_true", help="Create new descriptor *.dscj.txt")
 group.add_argument('-jnt',  action="store_true", help="Create new descriptor *.dscj.txt from *.dsc.txt")
@@ -1240,7 +1238,7 @@ addDate    = args["mvd"]
 
 Tsize     = []
 if (args["ts"]!=None): Tsize = [args["ts"]]
-if (args["tS"]!=None): Tsize = [120, 240]
+if (args["tS"]!=None): Tsize = [240]
 
 bgColor   = "#c0c0c0"
 if (args["tbg"]!=None):
@@ -1310,7 +1308,7 @@ if (jproc or jprocput or jnum):
         print "picman: stop"
         exit(0)
     List  = Pics # create new thumbs for pics in List
-    Tsize = [120, 240]
+    Tsize = [240]
 #----------------------------------------------------------------------------------------------------------
 if (args["gpsn"]):
    crGpsDesc(args["gpsn"], List)
