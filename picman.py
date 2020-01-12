@@ -1,5 +1,4 @@
 #!/usr/bin/python
-
 # picman.py
 # Picture Manager: process image descriptors, rename, create thumbs
 
@@ -54,36 +53,58 @@
 #                     -mvt removed, use -mvd instead
 # Version 10/06/2019: added -mvt using jhead. It is needed to merge images coming from multiple cameras
 #                     added rmGpsDesc() to remove gps descriptors after image rename
-# Version 11/23/2019: use only 240 thumbs
+# Version 11/23/2019: use only 240*240 thumbs
+# Version 01/08/2020: now runs both in Python 2.7 and 3.8.0
 
 #----------------------------------------------------------------------------------------------------------
-import sys, os, glob, re, time, json
-import copy, uuid
+import sys 
+import os, platform, glob, json, copy, re, uuid
 import shutil
 import argparse
-from   PIL import Image
+import time
 from   time import sleep
 from   datetime import datetime, timedelta
-import csv
-from   iptcinfo import IPTCInfo
+from   builtins import str
 import pprint
-import validators
+import csv
+import base64
 
-# For Win ActivePython run:
+pyVer    = platform.python_version()
+pyImport = ""
+if pyVer[0]<="2": 
+   try:
+     from   iptcinfo import IPTCInfo
+     from   PIL import Image
+     import validators
+   except Exception as e: pyImport = str(e)
+else:
+   try:
+     from   iptcinfo3 import IPTCInfo
+     from   PIL import Image
+     import validators
+   except Exception as e: pyImport = str(e)
+
 # To install PIL, run PIL-1.1.7.win32-py2.7.exe http://www.pythonware.com/products/pil/
 # pypm install iptcinfo
+
+# For python3:
+# pip install iptcinfo3
+
 # pip install validators
 
-# For CentOS:
+# For CentOS Python 2.7:
 # yum -y install python-pip  - if necessary
 # yum install jhead
+# pip install future
 # pip install Pillow
 # pip install iptcinfo
 # pip install validators
 
 #----------------------------------------------------------------------------------------------------
 # all symbols after x'80' => HTML encoding $#xxx;
-def utf8(str): return str.decode('utf_8').encode('ascii', 'xmlcharrefreplace')
+def utf8(str): 
+    if (hasattr(str, "decode")): return str.decode('utf-8').encode('ascii', 'xmlcharrefreplace')
+    else: return str.encode('ascii', 'xmlcharrefreplace').decode('utf-8')
 #----------------------------------------------------------------------------------------------------------
 # Prepare thumb by resizing the image and 
 # placing it in the center of properly colored square
@@ -93,28 +114,33 @@ def ThumbC(imgI, Tsize, bgColor):
  if (Tsize!=120):          th = "__t"
  if (imgI.find(".jpg")>0): imgO = imgI.replace(".jpg", th + ".jpg")
  else:                     imgO = imgI.replace(".JPG", th + ".JPG")
- print "picman: %s=>%s" % (imgI, imgO)
+ print ("picman: %s=>%s" % (imgI, imgO))
 
- blank = Image.new('RGB', (Tsize, Tsize), bgColor)
- img   = Image.open(imgI)
+ try:
+   blank = Image.new('RGB', (Tsize, Tsize), bgColor)
+   img   = Image.open(imgI)
+ except Exception as e:
+    print ("ThumbC(): cant't use Pillow Image: %s" % (str(e)))
+    sys.exit()  
+
  width, height = img.size
  if (width>=height): 
-     THUMB_SIZE = (Tsize, (Tsize*height)/width) 
-     BOX        = (0, (Tsize - THUMB_SIZE[1])/2)
+     THUMB_SIZE = (Tsize, (Tsize*height)//width) 
+     BOX        = (0, (Tsize - THUMB_SIZE[1])//2)
  else:              
-     THUMB_SIZE = ((width * Tsize)/height, Tsize)
-     BOX        = ((Tsize - THUMB_SIZE[0])/2, 0)
+     THUMB_SIZE = ((width * Tsize)//height, Tsize)
+     BOX        = ((Tsize - THUMB_SIZE[0])//2, 0)
  
  step = 0
  try:
-	img.thumbnail(THUMB_SIZE)
-	step = 1
-	blank.paste(img, BOX)
-	step = 2
-	blank.save(imgO) 
- except Exception, e:
-    print "ThumbC(): failed step %d - %s" % (step, str(e)) 
-    sys.exit()	
+    img.thumbnail(THUMB_SIZE)
+    step = 1
+    blank.paste(img, BOX)
+    step = 2
+    blank.save(imgO) 
+ except Exception as e:
+    print ("ThumbC(): failed step %d - %s" % (step, str(e)) )
+    sys.exit()  
  return
 #----------------------------------------------------------------------------------------------------------
 # Try to get Picasa/IPTC captions for jpg's with empty comments in List
@@ -127,13 +153,13 @@ def checkCaptions(List):
        if (curr==""): curr = " " # return blank instead of empty
        List[i][1] = curr
      
-   #print List
+   #print (List)
    return List
 #----------------------------------------------------------------------------------------------------------
 def getimage(fname):
  if (os.path.exists(fname) or not os.path.exists("./bak/" + fname)): return
  shutil.copy2("./bak/" + fname, "./")
- print  "getimage(): %s copied" % (fname)
+ print  ("getimage(): %s copied" % (fname))
  return
 #----------------------------------------------------------------------------------------------------------
 # Regroup L: 
@@ -189,7 +215,7 @@ def JsondscRegroup(L, MaxNPics):
     LOut.append(Out)
 
  NEmpty = MaxLen*len(LOut)-NPics
- print "JsondscRegroup(): MaxNPics=%s MaxLen=%s NEmpty=%s" % (MaxNPics, MaxLen, NEmpty)
+ print ("JsondscRegroup(): MaxNPics=%s MaxLen=%s NEmpty=%s" % (MaxNPics, MaxLen, NEmpty))
 
  return [LOut, NEmpty] 
 #----------------------------------------------------------------------------------------------------------
@@ -209,12 +235,12 @@ def JsondscRegroupMin(Rows, MaxNPics):
 # Use when JSON descriptor is not available
 def JsondscFromText(dscname, MaxNPics, getimages):
  if (not dscname.endswith(".dsc.txt")): 
-    print "picman.JsondscFromText: wrong %s" % (dscname)
+    print ("picman.JsondscFromText: wrong %s" % (dscname))
     return
  F = open(dscname)
  try:    L = F.readlines()
  except: 
-         print "JsondscFromText(): failed to read %s" % (dscname)
+         print ("JsondscFromText(): failed to read %s" % (dscname))
          return
  
  # ASCII descriptor => list of comment-pics rows 
@@ -225,7 +251,7 @@ def JsondscFromText(dscname, MaxNPics, getimages):
    el = el.replace("[", "")
    el = el.replace("_t.jpg", ".jpg")
    el = el.replace("http://images/", "")
-   #print "==>" + el
+   #print ("==>" + el)
    comment = ""
    if (el.find(":")>=0):
       tmp     = el.split(":")
@@ -257,10 +283,12 @@ def GetJpgComments(descname, List, MaxNPics, getimages):
   try: 
      app     = Image.open(fname).app
   except:
-     print "GetJpgComments(): failed to process %s" % (fname)
+     print ("GetJpgComments(): Failed to process %s" % (fname))
      exit(0)
   comment = ""
-  if ("COM" in app): comment = app["COM"].replace("\x00", "")
+  if ("COM" in app): 
+     comment = app["COM"].decode('utf-8')  # needed for python 3
+     comment = comment.replace("\x00", "")
   Res.append([fname, comment])
 
  if len(Res)==0:
@@ -269,13 +297,13 @@ def GetJpgComments(descname, List, MaxNPics, getimages):
  Res = checkCaptions(Res)
 
  # prepare the descriptors 
- #print "=>" + str(Res)
+ #print ("=>" + str(Res))
  Out   = ""
  LOut  = []
  Curr  = []
- #print Captions
+ #print (Captions)
  for el in Res:
-     #print el
+     #print (el)
      fname = el[0]
      el[0] = el[0].replace(".jpg", "_t.jpg")
      if el[1]!="":
@@ -287,7 +315,7 @@ def GetJpgComments(descname, List, MaxNPics, getimages):
         except:
              Out = Out + "\n : http://images/" + el[0]
              Curr = [el[1], fname]
-             print "GetJpgComments(): Wrong symbol in %s comment" % (fname)
+             print ("GetJpgComments(): Wrong symbol in %s comment" % (fname))
      else: 
         Out = Out + " http://images/" + el[0]
         Curr.append(fname)
@@ -310,9 +338,10 @@ def GetJpgComments(descname, List, MaxNPics, getimages):
  if (fs>0): tmp = JsonDscGet(descname + ".dscj.txt")
  if ("notes" in tmp):
     LOut["notes"] = copy.deepcopy(tmp["notes"]) 
-    print "GetJpgComments(): got pre-existing notes"
+    print ("GetJpgComments(): got pre-existing notes")
  
- json.dump(LOut, open(descname + ".dscj.txt", "w"), indent=1, sort_keys=True, encoding ="latin1")
+ #json.dump(LOut, open(descname + ".dscj.txt", "w"), indent=1, sort_keys=True, encoding ="latin1")
+ json.dump(LOut, open(descname + ".dscj.txt", "w"), indent=1, sort_keys=True)
  JsonDscProcs(descname + ".dscj.txt", 0, getimages, None) # process new descriptor immediately
 
  return len(Res)
@@ -333,7 +362,7 @@ def JsonRowProcs(row, getimages):
     
  # Prepare HTML table for this JSON row
  cell_size = 120 
- anormfmt  = "<a target=win_link href=./images/%s.jpg><img class=th_small src=./images/%s_t.jpg><span><img src=./images/%s__t.jpg></span></a>"
+ anormfmt  = "<a target=win_link href=./images/%s.jpg><img class=th_small src=./images/%s__t.jpg><span><img src=./images/%s__t.jpg></span></a>"
  aviewfmt  = "<a target=win_link href=./%s.jpg><img class=th_small src=./%s__t.jpg><span><img src=./%s__t.jpg></span></a>"
  tdheadfmt = "<td id=tdc colspan=%s width=%s>%s</td>\n"
  tdmainfmt = "<td id=tdi><div class=th_big>%s</div></td>\n"
@@ -387,7 +416,7 @@ def JsonDscGet(fname):
    IN  = json.loads(F_[0])
    F.close()
  except Exception as e:
-   print "JsonDscGet(): Wrong %s - %s" % (fname, str(e))
+   print ("JsonDscGet(): Wrong %s - %s" % (fname, str(e)))
    return {}
  
  return IN
@@ -404,11 +433,12 @@ def JsonDscProcs(fname, MaxNPics, getimages, env):
     NOTES = IN["notes"]
     del IN["notes"]
  
- if (len(IN.keys())!=1): 
-    print "JsonDscProcs(): Wrong #keys in %s" % (fname)
+ ink = list(IN.keys())
+ if (len(ink)!=1): 
+    print ("JsonDscProcs(): Wrong #keys in %s" % (fname))
     return 
 
- INkey = IN.keys()[0]
+ INkey = ink[0]
  IN1 = IN[INkey]
  if (MaxNPics>0):             
    IN1 = JsondscRegroupMin(IN1, MaxNPics)
@@ -427,7 +457,7 @@ def JsonDscProcs(fname, MaxNPics, getimages, env):
  if (len(NOTES)>0):
     IN1["notes"] = NOTES
 
- print "JsonDscProcs(): env=" + str(env)
+ print ("JsonDscProcs(): env=" + str(env))
  jdump    = json.dumps(IN1, indent=1, sort_keys=True)
  if (env): 
     Res_norm = "<!--%s\n%s\n-->\n%s" % ("dscj", jdump, Res_norm)
@@ -441,7 +471,7 @@ def JsonDscProcs(fname, MaxNPics, getimages, env):
     F.write(utf8(Res_norm))
     F.close()
  except Exception as e:
-   print "JsonDscProcs(): failed to write %s - %s" % (fname_norm, e)
+   print ("JsonDscProcs(): failed to write %s - %s" % (fname_norm, e))
     
  # Write .dscj.htm
  fmt       = ""
@@ -452,7 +482,7 @@ def JsonDscProcs(fname, MaxNPics, getimages, env):
    fmt = F.read()
    F.close() 
  except:
-   print "JsonDscProcs(): failed to read " + fmtfile
+   print ("JsonDscProcs(): failed to read " + fmtfile)
    return
 
  Res_view = Res_notes + Res_view
@@ -464,10 +494,10 @@ def JsonDscProcs(fname, MaxNPics, getimages, env):
     F.write(utf8(Res_view))
     F.close()
  except Exception as e:
-   print "JsonDscProcs(): failed to write %s - %s" % (fname_view, str(e))
+   print ("JsonDscProcs(): failed to write %s - %s" % (fname_view, str(e)))
    return
    
- print "JsonDscProcs(): %s, %s created" %(fname_norm, fname_view)
+ print ("JsonDscProcs(): %s, %s created" %(fname_norm, fname_view))
  return
 #----------------------------------------------------------------------------------------------------------------
 # Check and process the notes pairs
@@ -475,26 +505,26 @@ def NotesProcs(IN):
 
  # Check that this is a list of [string, string] pairs
  if (not IN.__class__.__name__=="list"):
-        print "NotesProcs(): Wrong notes in %s" % (el)
+        print ("NotesProcs(): Wrong notes in %s" % (el))
         pprint.pprint(In[el])
         return ""
  
  for el in IN:
         if (not el.__class__.__name__=="list"):
-           print "NotesProcs(): Wrong note %s" % (el)
+           print ("NotesProcs(): Wrong note %s" % (el))
            pprint.pprint(el_)
            return ""
         if (len(el)!=2):
-           print "NotesProcs(): Wrong note %s" % (el)
+           print ("NotesProcs(): Wrong note %s" % (el))
            pprint.pprint(el)
            return ""
         str = el[1].__class__.__name__=="str" or el[1].__class__.__name__=="unicode"  
         if (el[0].__class__.__name__!="str" and not str ):
-           print "NotesProcs(): Wrong note (%s, %s) in %s" % (el[0].__class__.__name__, el[1].__class__.__name__, el)
+           print ("NotesProcs(): Wrong note (%s, %s) in %s" % (el[0].__class__.__name__, el[1].__class__.__name__, el))
            pprint.pprint(el)
            return ""
         if (not el[1]=="" and not validators.url(el[1])):
-           print "NotesProcs(): Wrong note [%s, %s]" % (el[0], el[1])
+           print ("NotesProcs(): Wrong note [%s, %s]" % (el[0], el[1]))
            return ""
   
  res = ""
@@ -508,19 +538,19 @@ def NotesProcs(IN):
            continue
         res = res + el[0] + ": " + el[1] + "<br>\n"
  
- #print "NotesProcs(): res=" + res;
- print "NotesProcs(): %d notes processed" % (len(IN))
+ #print ("NotesProcs(): res=" + res;)
+ print ("NotesProcs(): %d notes processed" % (len(IN)))
  return res
 #----------------------------------------------------------------------------------------------------------------
 # Put comments into jpg's for this JSON descriptor using jhead
 def JsondscPutComments(fname):
 
  IN     = JsonDscGet(fname)
- INkeys = IN.keys()
+ INkeys = list(IN.keys())
  if ("notes" in INkeys): 
     INkeys.remove("notes")
  if (len(INkeys)!=1): 
-    print "JsondscPutComments(): wrong keys in desc"
+    print ("JsondscPutComments(): wrong keys in desc")
     pprint.pprint(INkeys)
     return 
 
@@ -535,7 +565,7 @@ def JsondscPutComments(fname):
        comment = fn
        continue
      if not os.path.exists(fn):
-       print "JsondscPutComments(): stop - %s not found" % (fn)
+       print ("JsondscPutComments(): stop - %s not found" % (fn))
        return
      cmd = "jhead -cl \"%s\" %s" % (comment, fn)
      os.popen(cmd)
@@ -543,7 +573,7 @@ def JsondscPutComments(fname):
      N = N + 1
      comment = " "
 
- print "JsondscPutComments(): %s images processed" % (N)
+ print ("JsondscPutComments(): %s images processed" % (N))
 
  return
 #----------------------------------------------------------------------------------------------------------------\
@@ -555,12 +585,13 @@ def JsondscRenum(fname):
  if ("notes" in IN):
     NOTES = IN["notes"]
     del IN["notes"]
-    
- if (len(IN.keys())!=1): 
-    print "JJsondscRenum(%s): wrong descriptor len=%d" % (fname, len(IN.keys()))
+ 
+ ink = list(IN.keys()) 
+ if (len(ink)!=1): 
+    print ("JsondscRenum(%s): wrong descriptor len=%d" % (fname, len(ink)))
     return []
 
- INkey = IN.keys()[0]
+ INkey = ink[0]
  IN    = IN[INkey]
  Pics  = []
  OUT   = []
@@ -570,14 +601,14 @@ def JsondscRenum(fname):
          OUT.append(el)
          if (el.endswith(".jpg")): 
             if (not os.path.exists(el)): Wrong.append(el) 
-            Pics.append(el)
+            Pics.appenad(el)
             el_t  = el[0:len(el)-4] + "_t.jpg"          #remove thumbs
             el__t = el[0:len(el)-4] + "__t.jpg"
             if (os.path.exists(el_t)):  os.remove(el_t)
             if (os.path.exists(el__t)): os.remove(el__t)
 
  if (len(Wrong)>0): 
-    print "JsondscRenum() failed. The following files do not exist: %s" % (str(Wrong))
+    print ("JsondscRenum() failed. The following files do not exist: %s" % (str(Wrong)))
     return []
 
  # renumber the files 
@@ -608,16 +639,16 @@ def JsondscRenum(fname):
        os.remove("%s.%03d.jpg" % (INkey, N))
        N = N + 1
  
- print "JsondscRenum(): %s images processed. %s extra images removed" % (len(Pics), N-len(Pics)-1)
+ print ("JsondscRenum(): %s images processed. %s extra images removed" % (len(Pics), N-len(Pics)-1))
 
  return Pics
 #----------------------------------------------------------------------------------------------------------------\
 def procPicasaIndex(fname):
 
- print "procPicasaIndex(): try using Picasa-generated %s" % (fname)
+ print ("procPicasaIndex(): try using Picasa-generated %s" % (fname))
  L = []
  if (not os.path.exists(fname)): 
-    print "procPicasaIndex(): %s not found" % (fname)
+    print ("procPicasaIndex(): %s not found" % (fname))
     return L
 
  try:
@@ -636,19 +667,19 @@ def procPicasaIndex(fname):
         ok   = not item in L and os.path.exists(item)
         if (not ok): 
            L = []
-           print "procPicasaIndex(): wrong item " + item
+           print ("procPicasaIndex(): wrong item " + item)
            break
         L.append(item)
- except Exception, e:
+ except Exception as e:
     L = []
-    print "procPicasaIndex(): wrong %s: %s" % (fname, str(e)) 
+    print ("procPicasaIndex(): wrong %s: %s" % (fname, str(e)) )
 
- if (len(L)==0): print "procPicasaIndex(): cannot use %s" % (fname)
+ if (len(L)==0): print ("procPicasaIndex(): cannot use %s" % (fname))
  else:
     fnbak = fname.replace(".html", ".bak")
     if (os.path.exists(fnbak)): os.remove(fnbak)
     os.rename(fname, fnbak)
-    print "procPicasaIndex(): %s ===> %s" % (fname, fnbak)
+    print ("procPicasaIndex(): %s ===> %s" % (fname, fnbak))
  
  return L
 #----------------------------------------------------------------------------------------------------------------\
@@ -660,14 +691,14 @@ def rename(addDate, prefix, List):
  if (fname!=""):  
     List = procPicasaIndex(fname)
  if (fname!="" and len(List)>0):
-    print "rename(): use %s, %d items" % (fname, len(List))
+    print ("rename(): use %s, %d items" % (fname, len(List)))
 
  if (len(List)==0):
-    print "rename(): nothing to process"
+    print ("rename(): nothing to process")
     return 0
 
  # Prepare new names
- print "rename(): %d items to process" % (len(List))
+ print ("rename(): %d items to process" % (len(List)))
  InPlace = False
  uid     = str(uuid.uuid4()).split("-")[0] + "."
  N       = 0
@@ -693,34 +724,34 @@ def rename(addDate, prefix, List):
     if (prefix!=""): name = el_ + "%s.%.03d%s.%s" % (prefix.lower(), N, now, ext.lower())
     else:            name = (re.sub('[^a-zA-Z0-9]', '.', el)).lower()
     if (name.startswith(".")): name = "0" + name
-    #print "=>%s: %s*%s" % (prefix, name, el)
+    #print ("=>%s: %s*%s" % (prefix, name, el))
         
     if (name!=el and os.path.exists(name)): 
        InPlace = True
     if (name!=el):     
        List_.append([el, name])
 
- if (InPlace): print "rename(): in place - stage 1" 
+ if (InPlace): print ("rename(): in place - stage 1")
  else:         
     uid = ""
-    print "rename(): do it" 
+    print ("rename(): do it")
  List = List_   
  for el in List:
     name = uid + el[1]
     if (os.path.exists(name)): os.remove(name) 
-    print "rename(): %s=>%s" % (el[0], name)
+    print ("rename(): %s=>%s" % (el[0], name))
     os.rename(el[0], name)
 
  if (not InPlace): return N
 
- print "rename(): in place - stage 2"
+ print ("rename(): in place - stage 2")
  for el in List:
     if (el[0]==""): continue
     name    = el[1] 
     tmpname = uid + el[1]
     if (os.path.exists(name)): os.remove(name) 
     
-    print "rename(): %s=>%s" % (tmpname, name)
+    print ("rename(): %s=>%s" % (tmpname, name))
     tryMore = False
     try: 
        os.rename(tmpname, name)
@@ -731,7 +762,7 @@ def rename(addDate, prefix, List):
        try: 
           os.rename(tmpname, name)
        except:   
-          print "rename(): %s=>%s failed 2 times" % (tmpname, name)
+          print ("rename(): %s=>%s failed 2 times" % (tmpname, name))
           
     name_t  = name[0:len(name)-4] + "_t.jpg"          #remove thumbs
     name__t = name[0:len(name)-4] + "__t.jpg"
@@ -744,7 +775,7 @@ def rename(addDate, prefix, List):
 # Find the first image if any with gps info and make caption a hyperlink to Google Maps.
 def procGroup(gr):
  if (len(gr)<2): 
-    print "procGroup(): wrong group " + str(gr)
+    print ("procGroup(): wrong group " + str(gr))
     return gr
  
  if ("empty" in gpsDesc): iniGpsDesc()
@@ -768,7 +799,7 @@ def procGroup(gr):
  head = fmatA % (link, head)
 
  gr[0] = head
- #print "dbg " + str(gr)
+ #print ("dbg " + str(gr))
  return gr
 #----------------------------------------------------------------------------------------------------------
 # Initialize gpsDesc for procGroup()
@@ -783,9 +814,10 @@ def iniGpsDesc():
      if (item[-1]=="y"): 
         gpsDesc[item[1]] = item[3] 
 
- if (len(gpsDesc.keys())>1): del gpsDesc["empty"]
- #print "iniGpsDesc()" + gpsDesc
- print "iniGpsDesc() %d items in gpsDesc" % (len(gpsDesc.keys()))
+ k = list(gpsDesc.keys())
+ if (len(k)>1): del gpsDesc["empty"]
+ #print ("iniGpsDesc()" + gpsDesc)
+ print ("iniGpsDesc() %d items in gpsDesc" % (len(k)))
 
  return
 #----------------------------------------------------------------------------------------------------------
@@ -796,10 +828,10 @@ def crGpsDesc(dst, Ljpg):
  
  Lcsv = glob.glob("*.csv")
  if (len(Lcsv)==0):
-    print "crGpsDesc(): no csv to process"
+    print ("crGpsDesc(): no csv to process")
     return
 
- print "crGpsDesc(): dst=" + str(dst)
+ print ("crGpsDesc(): dst=" + str(dst))
 
  res = []
  # add image items
@@ -812,7 +844,7 @@ def crGpsDesc(dst, Ljpg):
          res.append([t, None, None, item, "jpg"])
 
  if (len(Ljpg)==0):
-    print "crGpsDesc(): no jpg to process"
+    print ("crGpsDesc(): no jpg to process")
     return
          
  for fn in Lcsv:
@@ -821,20 +853,20 @@ def crGpsDesc(dst, Ljpg):
        with open(fn, "rb") as f:
             reader = csv.reader(f)
             for row in reader: curr.append(row)
-     except Exception, e:
-            print "crGpsDesc(): Failed to read %s - %s" % (fn, str(e))
+     except Exception as e:
+            print ("crGpsDesc(): Failed to read %s - %s" % (fn, str(e)))
             continue
 
      if (len(curr)<2 or len(curr[0])<3 or curr[0][0]!="time" or curr[0][1]!="lat" or curr[0][2]!="lon"):
-        print "crGpsDesc(): Wrong %s" % (fn)
+        print ("crGpsDesc(): Wrong %s" % (fn))
         continue
      curr.pop(0)
 
-     print "crGpsDesc(): %s processed, %d lines" % (fn, len(curr))
+     print ("crGpsDesc(): %s processed, %d lines" % (fn, len(curr)))
      # Prepare res with dst-adjusted dates
      for line in curr:
          if (len(line)<3):
-             print "crGpsDesc(): Wrong %s - line too short" % (fn)
+             print ("crGpsDesc(): Wrong %s - line too short" % (fn))
              break
          (date, lat, lon) = (line[0], line[1], line[2])
          date_ = date.replace("Z", "UTC")
@@ -846,7 +878,7 @@ def crGpsDesc(dst, Ljpg):
          res.append([date1, lat, lon, date2, "gps"])
      
  res.sort()
- print "crGpsDesc(): total processed items: %d" % (len(res))
+ print ("crGpsDesc(): total processed items: %d" % (len(res)))
  for i in range(0, len(res)): # mark gps items - neighbours of jpg's
           if (res[i][4]!="jpg"): continue
           currDate = datetime.strptime(res[i][0], "%Y%m%d.%H%M%S")
@@ -875,7 +907,7 @@ def crGpsDesc(dst, Ljpg):
  for line in res:
            if (line[4]!="jpg"): continue
            nimg = nimg + 1
-           #print line
+           #print (line)
            t = line[0]
            (Y, M, D, h, m, s) = (t[0:4], t[4:6], t[6:8], t[9:11], t[11:13], t[13:15])
            date = Y + "-" + M + "-" + D + " " + h + ":" + m + ":" + s
@@ -893,10 +925,10 @@ def crGpsDesc(dst, Ljpg):
    f.write(desc)
    f.close()
  except Exception as e:
-   print "crGpsDesc(): failed to write %s - %s" % (fn, str(e))
+   print ("crGpsDesc(): failed to write %s - %s" % (fn, str(e)))
    return
    
- print "crGpsDesc(): %s created, %d images processed" % (fn, nimg)
+ print ("crGpsDesc(): %s created, %d images processed" % (fn, nimg))
 
  return
 #--------------------------------------------------------------------------------------
@@ -916,7 +948,7 @@ def crGpsHtm():
  if (desc==None): return
  
  if (not "dst" in desc or desc["dst"]=="" or not "root" in desc):
-   print "crGpsDesc(): can't create gps.htm descriptor"
+   print ("crGpsDesc(): can't create gps.htm descriptor")
    return
 
  # prepare html
@@ -977,10 +1009,10 @@ def crGpsHtm():
    f.write(html)
    f.close()
  except Exception as e:
-   print "crGpsHtm(): failed to write %s" % (fn)
+   print ("crGpsHtm(): failed to write %s" % (fn))
    return
    
- print "crGpsHtm(): %s created" % (fn)
+ print ("crGpsHtm(): %s created" % (fn))
  return
 #--------------------------------------------------------------------------------------
 # Create json descriptor *.gps.txt from IPTC in *.jpg
@@ -992,31 +1024,31 @@ def crGpsDescFromJpg(L):
    if (not fn.endswith(".jpg") or fn.endswith("_t.jpg")): continue
    (tmp, spinsJ) = iptcGet(fn)
    if (spinsJ.strip()==""):
-      print "crGpsDescFromJpg(): %s - can't get IPTC info" % (fn)
+      print ("crGpsDescFromJpg(): %s - no info in IPTC" % (fn))
       continue
    try:
       spins = json.loads(spinsJ)
    except Exception as e:
-      print "crGpsDescFromJpg(): %s - wrong JSON" % (fn)
+      print ("crGpsDescFromJpg(): %s - wrong JSON" % (fn))
       continue
    if (not "dst" in spins or not "root" in spins):
-      print "crGpsDescFromJpg(): %s - wrong spins %s" % (fn, str(spins))
+      print ("crGpsDescFromJpg(): %s - wrong spins %s" % (fn, str(spins)))
       continue
-   if (dst!="" and spins["dst"]!=dst):
-      print "crGpsDescFromJpg(): %s - wrong spins %s" % (fn, str(spins))
-      continue
+   #if (dst!="" and spins["dst"]!=dst):
+   #   print ("crGpsDescFromJpg(): %s - wrong spins: %s dst: %s" % (fn, str(spins), dst))
+   #   continue
    dst  = spins["dst"]
    nimg = nimg + 1
    root.append([nimg] + [fn] + spins["root"])
    
  desc  = {"dst": dst, "root": root}
  descJ = json.dumps(desc, indent=1, sort_keys=True)
- #print descJ
+ #print (descJ)
 
  fn = os.getcwd().replace("\\", "/").replace("_", "")
  fn = fn.split("/")[-1] + ".gps.txt"
  if (not root):
-   print "crGpsDescFromJpg(): can't create %s with empty root" % (fn)
+   print ("crGpsDescFromJpg(): can't create %s with empty root" % (fn))
    return
  
  try:
@@ -1024,10 +1056,10 @@ def crGpsDescFromJpg(L):
    f.write(descJ)
    f.close()
  except Exception as e:
-   print "crGpsDescFromJpg(): failed to write %s" % (fn)
+   print ("crGpsDescFromJpg(): failed to write %s" % (fn))
    return
    
- print "crGpsDescFromJpg(): %s created, %d images processed" % (fn, nimg)
+ print ("crGpsDescFromJpg(): %s created, %d images processed" % (fn, nimg))
   
  return
 #--------------------------------------------------------------------------------------
@@ -1047,7 +1079,7 @@ def getGpsDesc():
  fn = os.getcwd().replace("\\", "/").replace("_", "")
  fn = fn.split("/")[-1] + ".gps.txt"
  if (not os.path.exists(fn)): 
-   #print "getGpsDesc(): %s does not exist" % (fn)
+   #print ("getGpsDesc(): %s does not exist" % (fn))
    return None
  try:
    f = open(fn, "r")
@@ -1055,7 +1087,7 @@ def getGpsDesc():
    f.close()
    desc = json.loads(desc)
  except Exception as e:
-   print "getGpsDesc(): failed to get json from %s" % (fn, str(e))
+   print ("getGpsDesc(): failed to get json from %s" % (fn, str(e)))
    return None
 
  return desc   
@@ -1065,7 +1097,7 @@ def gpsDesc2jpg():
  desc = getGpsDesc()
  if (desc==None): return 
  if (not "dst" in desc or not "root" in desc):
-   print "gpsDesc2jpg(): wrong json in %s" % (fn, str(e))
+   print ("gpsDesc2jpg(): wrong json in %s" % (fn, str(e)))
    return
 
  (dst, root) = (desc["dst"], desc["root"])
@@ -1073,9 +1105,9 @@ def gpsDesc2jpg():
    fn = item[1]
    out = {"dst": dst, "root": item[2:]}
    out = json.dumps(out)
-   #print out
+   #print (out)
    iptcSet(fn, None, out)
-   print "gpsDesc2jpg(): processed %s" % (fn)
+   print ("gpsDesc2jpg(): processed %s" % (fn))
    
  return
 #--------------------------------------------------------------------------------------
@@ -1085,13 +1117,13 @@ def setTime(List):
        tc = os.path.getctime(f)
        ta = os.path.getatime(f)
        t = min(tc, ta)
-       #print "=>tc=%s ta=%s t=%s" % (tc, ta, t)
+       #print ("=>tc=%s ta=%s t=%s" % (tc, ta, t))
        t_ = getExiTime(f)
        try:
           t_ = time.strptime(t_, "%Y:%m:%d %H:%M:%S") 
           t_ = time.mktime(t_)
        except:
-          print "setTime(): %s - ignore wrong DateTimeOriginal" % (f)
+          print ("setTime(): %s - ignore wrong DateTimeOriginal" % (f))
        if (t_!=""): t = t_   
        os.utime(f, (t, t)) # set mod,access times   
 
@@ -1105,7 +1137,7 @@ def getExiTime(fn):
             im = Image.open(f)
             exifdata = im._getexif()
             if (exifdata!=None and 36867 in exifdata): 
-               #print exifdata
+               #print (exifdata)
                t = exifdata[36867] # DateTimeOriginal
             if (int(t[:2])>20 or int(t[:2])<19): t = "" 
        except: pass
@@ -1114,20 +1146,30 @@ def getExiTime(fn):
 #----------------------------------------------------------------------------------------------------------
 # Get Picasa/IPTC caption, spec instr from the given file
 def iptcGet(fn):
+  info  = None
   capt  = None
   spins = None
-  info  = None
-  sys.stdout = open(os.devnull, 'w') # disable print to block warning msgs
+  #sys.stdout = open(os.devnull, 'w') # disable print to block warning msgs
   try:
      info  = IPTCInfo(fn, force=True)
-     capt  = info.data['caption/abstract']
+     if (hasattr(info, "data")): # python 2
+        #print("p2")
+        capt  = info.data['caption/abstract']
+        spins = info.data['special instructions']
+     else:                       # python 3
+        #print("p3")
+        capt  = info['caption/abstract']
+        if (capt):  capt  = capt.decode('utf-8')
+        spins = info['special instructions']
+        if (spins): spins = spins.decode('utf-8')
+        #print ("===>%s|%s" %(capt, spins))
+
      if (not(capt)): capt = " "
-     spins = info.data['special instructions']
      if (not(spins)): spins = " "
-     sys.stdout = sys.__stdout__ # enable print
-  except Exception, e:
-     sys.stdout = sys.__stdout__  # enable print
-     print "iptcGet() failed to open IPTC in %s - %s" % (fn, str(e))
+     #sys.stdout = sys.__stdout__ # enable print
+  except Exception as e:
+     #sys.stdout = sys.__stdout__  # enable print
+     print ("iptcGet() failed to open IPTC in %s - %s" % (fn, str(e)))
      return [" ", " "]
   
   capt = capt.strip()
@@ -1136,7 +1178,7 @@ def iptcGet(fn):
   spins = spins.strip()
   if (spins==""): spins = " "
   spins = utf8(spins)
-  #print "===>%s/%s" %(fn, capt)
+  #print ("===>%s|%s" %(fn, capt))
   return [capt, spins]
 #----------------------------------------------------------------------------------------------------------
 # Put Picasa/IPTC caption and/or special instruction to the given jpg file. 
@@ -1154,21 +1196,29 @@ def iptcSet(fn, capt, spins):
      n = 1
      info = IPTCInfo(fn, force=True)
      n = 2
-     if (capt):  info.data['caption/abstract'] = capt
-     if (spins): info.data['special instructions'] = spins
-     info.data['date created']     = now
-     info.data['writer/editor']    = "picman"
-     #info.data['copyright notice'] = ""
-     #info.data['keywords']  = ""
+     if (hasattr(info, "data")): # python 2
+        if (capt):  info.data['caption/abstract'] = capt
+        if (spins): info.data['special instructions'] = spins
+        info.data['date created']     = now
+        info.data['writer/editor']    = "picman"
+        #info.data['copyright notice'] = ""
+        #info.data['keywords']  = ""
+     else:                      # python 3
+        if (capt):  info['caption/abstract'] = capt
+        if (spins): info['special instructions'] = spins
+        info['date created']     = now
+        info['writer/editor']    = "picman"
+        #info['copyright notice'] = ""
+        #info['keywords']  = ""
      n = 3
      info.save()
      os.remove(fn + "~")
      sys.stdout = sys.__stdout__ # enable print
-  except Exception, e:
+  except Exception as e:
     info  = None
     sys.stdout = sys.__stdout__  # enable print
-    #print "[%s]" % (capt)
-    print "iptcSet() failed to process %s - %d %s" % (fn, n, str(e))
+    #print ("[%s]" % (capt))
+    print ("iptcSet() failed to process %s - %d %s" % (fn, n, str(e)))
   return
 #----------------------------------------------------------------------------------------------------
 # desc can be info.txt or dscj.txt
@@ -1188,9 +1238,15 @@ def setDesc(desc):
 
  open(res, 'a').close()
  
- print "setDesc: no descriptor found, created empty " + res
+ print ("setDesc: no descriptor found, created empty " + res)
  
  return res # new desc created
+#----------------------------------------------------------------------------------------------------
+if (pyImport==""):
+    print ("picman: start %s" % (pyVer))
+else:
+    print ("picman: can't start %s %s" % (pyVer, pyImport) )
+    exit(1)
 #----------------------------------------------------------------------------------------------------
 # extract options
 
@@ -1226,9 +1282,10 @@ parser.add_argument("-tbg", type=str, help="Background color code for thumbs. De
 #parser.add_argument("path", type = str, help="files to process")
 
 args = vars(parser.parse_args())
+#print (args)
 
 desc = setDesc("dscj.txt")  
-print "picman: using " + desc
+print ("picman: using " + desc)
 
 desc = desc.replace(".dscj.txt", "")  
 
@@ -1245,9 +1302,9 @@ if (args["tbg"]!=None):
    try: 
       tmp     = int(args["tbg"][1:], 16)
       if (len(args["tbg"])==7 and args["tbg"][0]=="#"): bgColor = args["tbg"]
-      else: print "picman: Wrong tbg %s assumed %s" % (args["tbg"], bgColor)
+      else: print ("picman: Wrong tbg %s assumed %s" % (args["tbg"], bgColor))
    except:
-      print "picman: Wrong tbg %s assumed %s" % (args["tbg"], bgColor)
+      print ("picman: Wrong tbg %s assumed %s" % (args["tbg"], bgColor))
 if (args["tbg"]!=None): bgcolor = args["tbg"]
 
 env       = args["jue"]
@@ -1269,43 +1326,43 @@ else:
 List.sort()
 
 if (len(List)==0 and not jproc and not jnewtext):
-   print "picman: Nothing to process"
-   print help
+   print ("picman: Nothing to process")
+   print (help)
    exit(0)
 #----------------------------------------------------------------------------------------------------------
 if (jnew):
-   print "picman: prepare new json descriptor %s.dscj.txt: %s" % (desc, "*")
+   print ("picman: prepare new json descriptor %s.dscj.txt: %s" % (desc, "*"))
    N = GetJpgComments(desc, List, jnewMaxNPics, getimages)
-   print "picman: %d processed images" % N
-   print "picman: stop"
+   print ("picman: %d processed images" % N)
+   print ("picman: stop")
    exit(0)
 #----------------------------------------------------------------------------------------------------------
 if (jnewtext):
    fname = desc
    if (not os.path.isfile(desc + ".dsc.txt")):
-       print "picman: no %s.dsc.txt - stop" % (desc)
+       print ("picman: no %s.dsc.txt - stop" % (desc))
        exit(0)
-   print "picman: prepare new json descriptor from: " + fname
+   print ("picman: prepare new json descriptor from: " + fname)
    JsondscFromText(desc, jnewMaxNPics, getimages)
-   print "picman: stop"
+   print ("picman: stop")
    exit(0)
 #----------------------------------------------------------------------------------------------------------
 if (jproc or jprocput or jnum):
     Pics = []
     fname = desc + ".dscj.txt"
     if (jnum): 
-        print "picman: renumber images using " + fname
+        print ("picman: renumber images using " + fname)
         Pics = JsondscRenum(fname)
         if (len(Pics)>0):  
            jproc = True       # create new desc
     if (jproc):
-        print "picman: prepare json descriptor " + fname
+        print ("picman: prepare json descriptor " + fname)
         JsonDscProcs(fname, jnewMaxNPics, getimages, env)
     if (jprocput): 
-        print "picman: %s put comments to images " % (fname)
+        print ("picman: %s put comments to images " % (fname))
         JsondscPutComments(fname) 
     if (len(Pics)==0): 
-        print "picman: stop"
+        print ("picman: stop")
         exit(0)
     List  = Pics # create new thumbs for pics in List
     Tsize = [240]
@@ -1313,45 +1370,45 @@ if (jproc or jprocput or jnum):
 if (args["gpsn"]):
    crGpsDesc(args["gpsn"], List)
    crGpsHtm()
-   print "picman: stop"
+   print ("picman: stop")
    exit(0)
 #----------------------------------------------------------------------------------------------------------
 if (args["gpsu"]):
    gpsDesc2jpg()
-   print "picman: stop"
+   print ("picman: stop")
    exit(0)
 #----------------------------------------------------------------------------------------------------------
 if (args["gpsg"]):
    crGpsDescFromJpg(List)
    crGpsHtm()
-   print "picman: stop"
+   print ("picman: stop")
    exit(0)
 #----------------------------------------------------------------------------------------------------------
 if (args["mvt"]):
    cmd = "jhead -n%Y.%m.%d.%H%M%S *.jpg"
    os.system(cmd)
    rmGpsDesc()
-   print "picman: stop"
+   print ("picman: stop")
    exit(0)
 
 #----------------------------------------------------------------------------------------------------------
 if (Rename):
-   print "picman: rename images"
+   print ("picman: rename images")
    if (args["mvc"]): desc = "";
-   print "picman: %d processed images" % rename(addDate, desc, List)
+   print ("picman: %d processed images" % rename(addDate, desc, List))
    rmGpsDesc()
-   print "picman: stop"
+   print ("picman: stop")
    exit(0)
 
 #----------------------------------------------------------------------------------------------------------
 if (toSetTime):
-   print "picman: Set mod times for %d images: %s" % (len(List), "*")
+   print ("picman: Set mod times for %d images: %s" % (len(List), "*"))
    setTime(List)
-   print "picman: Stop"
+   print ("picman: Stop")
    exit(0)
 #----------------------------------------------------------------------------------------------------------
 if (len(Tsize)>0): 
-   print "picman: Prepare thumbs: Tsize=%s bgColor=%s %s" % (str(Tsize), bgColor, "*")
+   print ("picman: Prepare thumbs: Tsize=%s bgColor=%s %s" % (str(Tsize), bgColor, "*"))
    for imgI in List:
        if (imgI.find("_t.jpg")>0): continue
        if (imgI.find("_t.JPG")>0): continue
@@ -1360,6 +1417,6 @@ if (len(Tsize)>0):
 
 if (os.path.exists("picman.log")): os.remove("picman.log")
 
-print "picman: Stop"
+print ("picman: Stop")
 exit(0)
 #----------------------------------------------------------------------------------------------------------
