@@ -45,17 +45,22 @@
 # Version 08/11/2018: added setDesc() to create descriptor if non-existent
 # Version 10/22/2018: process .*jpg files
 #                     Picasa index.html ===> index.bak
-# Version 12/17/2018: updated utf8()
+# Version 12/17/2018: update utf8()
 # Version 08/19/2019: begin enabling gps captions
 # Version 09/04/2019: disable IPTC warnings
-# Version 09/15/2019: gps captions ver 1: introduced *.gps.txt, *.gps,.htm descriptors
+# Version 09/15/2019: gps captions ver 1: introduced *.gps.txt, *.gps, .htm descriptors
 # Version 09/21/2019: gps update / fix: -gpsn, -ghpsg, -gpsu
 #                     -mvt removed, use -mvd instead
 # Version 10/06/2019: added -mvt using jhead. It is needed to merge images coming from multiple cameras
 #                     added rmGpsDesc() to remove gps descriptors after image rename
 # Version 11/23/2019: use only 240*240 thumbs
 # Version 01/08/2020: now runs both in Python 2.7 and 3.8.0
-
+# Version 02/02/2020: include gps descriptor in *.dscj
+# Version 08/09/2020: -gpsn fixes for 3.8 compatability
+# Version 09/27/2020: make *.gps.htm responsive
+# Version 10/04/2020: make *.dscj.txt, *.dsc.htm responsive
+# Version 10/27/2020: added picDir to dscj
+# Version 03/14/2021: enable cp2ftp()
 #----------------------------------------------------------------------------------------------------------
 import sys 
 import os, platform, glob, json, copy, re, uuid
@@ -84,13 +89,10 @@ else:
      import validators
    except Exception as e: pyImport = str(e)
 
-# To install PIL, run PIL-1.1.7.win32-py2.7.exe http://www.pythonware.com/products/pil/
-# pypm install iptcinfo
-
 # For python3:
 # pip install iptcinfo3
-
 # pip install validators
+# pip install Pillow
 
 # For CentOS Python 2.7:
 # yum -y install python-pip  - if necessary
@@ -326,7 +328,7 @@ def GetJpgComments(descname, List, MaxNPics, getimages):
  LOut1 = JsondscRegroupMin(LOut, MaxNPics)
 
  # Prepare the descriptors
- LOut = {descname : LOut1}
+ LOut = {descname : LOut1, "picDir": descname}
  LOut["notes"] = [["", ""], ["", ""]]
  
  # try to get notes from pre-existing desc
@@ -362,10 +364,10 @@ def JsonRowProcs(row, getimages):
     
  # Prepare HTML table for this JSON row
  cell_size = 120 
- anormfmt  = "<a target=win_link href=./images/%s.jpg><img class=th_small src=./images/%s__t.jpg><span><img src=./images/%s__t.jpg></span></a>"
- aviewfmt  = "<a target=win_link href=./%s.jpg><img class=th_small src=./%s__t.jpg><span><img src=./%s__t.jpg></span></a>"
+ anormfmt  = "<a target=win_link href=./images/%s.jpg><img class=th_small src=./images/%s__t.jpg></a>"
+ aviewfmt  = "<a target=win_link href=./%s.jpg><img class=th_small src=./%s__t.jpg></a>"
  tdheadfmt = "<td id=tdc colspan=%s width=%s>%s</td>\n"
- tdmainfmt = "<td id=tdi><div class=th_big>%s</div></td>\n"
+ tdmainfmt = "<td id=tdi>%s</td>\n"
  trfmt     = "<tr>%s</tr>\n"
  tablefmt  = "<table id=tabi>\n%s%s</table>\n"
  Res_norm  = ""
@@ -385,8 +387,8 @@ def JsonRowProcs(row, getimages):
          continue
       if (getimages): getimage(el)
       el    = el.replace(".jpg", "")
-      anorm = anormfmt % (el, el, el) 
-      aview = aviewfmt % (el, el, el) 
+      anorm = anormfmt % (el, el) 
+      aview = aviewfmt % (el, el) 
       main_norm = main_norm + tdmainfmt % (anorm)
       main_view = main_view + tdmainfmt % (aview)
 
@@ -428,19 +430,28 @@ def JsonDscProcs(fname, MaxNPics, getimages, env):
  IN = JsonDscGet(fname)
  if (IN=={}): return
  
- NOTES = []
+ NOTES = None
  if ("notes" in IN):
     NOTES = IN["notes"]
     del IN["notes"]
+ GPS = None
+ if ("gps" in IN):
+    GPS = IN["gps"]
+    del IN["gps"]
+ gpsd = getGpsDesc()
+ if (gpsd): GPS = gpsd
  
+ INkey = None
+ if ("picDir" in IN):
+    INkey = IN["picDir"]
  ink = list(IN.keys())
- if (len(ink)!=1): 
+ if (INkey==None and len(ink)!=1): 
     print ("JsonDscProcs(): Wrong #keys in %s" % (fname))
     return 
-
- INkey = ink[0]
+ if (INkey==None): INkey = ink[0]
  IN1 = IN[INkey]
- if (MaxNPics>0):             
+ 
+ if (MaxNPics>0):
    IN1 = JsondscRegroupMin(IN1, MaxNPics)
 
  Res_norm  = ""
@@ -453,10 +464,11 @@ def JsonDscProcs(fname, MaxNPics, getimages, env):
  Res_notes = NotesProcs(NOTES)
    
  # Write .dscj.txt
- IN1 = {INkey: IN1}
- if (len(NOTES)>0):
-    IN1["notes"] = NOTES
-
+ IN1 = {INkey: IN1, "picDir": INkey}
+ 
+ if (NOTES): IN1["notes"] = NOTES
+ if (GPS):   IN1["gps"] = GPS
+ 
  print ("JsonDscProcs(): env=" + str(env))
  jdump    = json.dumps(IN1, indent=1, sort_keys=True)
  if (env): 
@@ -549,15 +561,19 @@ def JsondscPutComments(fname):
  INkeys = list(IN.keys())
  if ("notes" in INkeys): 
     INkeys.remove("notes")
- if (len(INkeys)!=1): 
+ if ("gps" in INkeys): 
+    INkeys.remove("gps")
+ INkey = None
+ if ("picDir" in INkeys):
+    INkey = IN["picDir"]
+ if (INkey==None and len(INkeys)!=1): 
     print ("JsondscPutComments(): wrong keys in desc")
     pprint.pprint(INkeys)
     return 
-
- INkey  = INkeys[0]
- IN     = IN[INkey]
-
- N = 0
+ if (INkey==None): INkey  = INkeys[0]
+ 
+ IN = IN[INkey]
+ N  = 0
  comment = " "
  for row in IN:
    for fn in row:
@@ -790,7 +806,7 @@ def procGroup(gr):
  if (found==""): return gr
 
  fmatGooMaps = "https://www.google.com/maps/?q=%s"
- fmatA       = "<a target=win_link href=%s>%s</a>"
+ fmatA       = "<a class=butt target=win_link href=%s>%s</a>"
 
  link = found
  if (not link.startswith("http")): link = fmatGooMaps % (link)
@@ -841,7 +857,7 @@ def crGpsDesc(dst, Ljpg):
          if (t==""): continue
          t = t.replace(" ", ".")
          t = t.replace(":", "")
-         res.append([t, None, None, item, "jpg"])
+         res.append([t, "", "", item, "jpg"])
 
  if (len(Ljpg)==0):
     print ("crGpsDesc(): no jpg to process")
@@ -850,7 +866,7 @@ def crGpsDesc(dst, Ljpg):
  for fn in Lcsv:
      curr = [] 
      try:
-       with open(fn, "rb") as f:
+       with open(fn, "r") as f:
             reader = csv.reader(f)
             for row in reader: curr.append(row)
      except Exception as e:
@@ -874,10 +890,11 @@ def crGpsDesc(dst, Ljpg):
          date_ = date_+ timedelta(hours=dst)
          date1 = date_.strftime("%Y%m%d.%H%M%S")
          date2 = date_.strftime("%Y-%m-%d %H:%M:%S")
-         # print "dbg: " + date + "=>" + date1 + " " + date2
+         # print ("dbg: " + date + "=>" + date1 + " " + date2)
          res.append([date1, lat, lon, date2, "gps"])
-     
+ # pprint.pprint(res)
  res.sort()
+
  print ("crGpsDesc(): total processed items: %d" % (len(res)))
  for i in range(0, len(res)): # mark gps items - neighbours of jpg's
           if (res[i][4]!="jpg"): continue
@@ -961,8 +978,8 @@ def crGpsHtm():
  <head>
  <style>
  p{border-style:solid; border-width:2; margin:5; padding:5; display:table}
- img{width:640}
- table{width:100%}
+ img{min-width:640; width:100%; height:auto;}
+ table{min-width:640; width:100%}
  </style>
  </head>
  <body>
@@ -1242,6 +1259,32 @@ def setDesc(desc):
  
  return res # new desc created
 #----------------------------------------------------------------------------------------------------
+def cp2ftp():
+ ljpg = glob.glob("./*jpg") 
+ if (not ljpg):
+     print("cp2ftp: no jpg's to copy")
+     return
+	 
+ src  = os.getcwd().replace("\\", "/")	 
+ blog = src.split("/")[-2] # got blog from cwd
+ 	 
+ dest = os.path.dirname(os.path.realpath(__file__)).replace("\\", "/")
+ last = dest.rfind("/")  
+ dest = dest[0:last] # got parent path of this script
+ dest = dest + "/ftp/" + blog + "/images"
+
+ ok = os.path.isdir(dest)
+ if (not ok):
+    print ("cp2ftp: wrong dest: " + dest)
+    return
+
+ print ("cp2ftp: try %s ===> %s" % (src, dest))	
+ for fn in ljpg:
+    shutil.copy(fn, dest)
+ print("cp2ftp: %d files copied to %s" % (len(ljpg), dest))
+  
+ return
+#====================================================================================================
 if (pyImport==""):
     print ("picman: start %s" % (pyVer))
 else:
@@ -1258,6 +1301,8 @@ Notes:
 '''
 
 parser = argparse.ArgumentParser(description=notes)
+parser.parse_args([]) 
+
 group  = parser.add_mutually_exclusive_group(required=True)
 group.add_argument('-mv',   action="store_true", help="Rename *.jpg files to prefix.nnn.ext")
 group.add_argument('-mvc',  action="store_true", help="Rename *.jpg files to lower case, replace non-alphanum characters by dots")
@@ -1272,6 +1317,7 @@ group.add_argument('-ju',   action="store_true", help="Update existing descripto
 group.add_argument('-jue',  action="store_true", help="Same as -ju plus create envelope around json in *.dscj.txt")
 group.add_argument('-jun',  action="store_true", help="Recreate descriptor *.dscj.txt, renumber images") 
 group.add_argument('-jp',   action="store_true", help="Put comments from the given *.dscj.txt to jpg's")
+group.add_argument('-2ftp', action="store_true", help="Copy *.jpg images to proper ftp subdirectory")
 group.add_argument('-gpsn', type=int, help="Create new descriptors *.gps.txt *.gps.htm from Android *.csv files. The value is dst offset for Zulu")
 group.add_argument('-gpsu', action="store_true", help="Update descriptors *.gps.txt *.and gps.htm, put *.gps.txt info to image files")
 group.add_argument('-gpsg', action="store_true", help="Create descriptors *.gps.txt *.and gps.htm from *.jpg")
@@ -1344,6 +1390,11 @@ if (jnewtext):
        exit(0)
    print ("picman: prepare new json descriptor from: " + fname)
    JsondscFromText(desc, jnewMaxNPics, getimages)
+   print ("picman: stop")
+   exit(0)
+#----------------------------------------------------------------------------------------------------------
+if (args["2ftp"]):
+   cp2ftp()
    print ("picman: stop")
    exit(0)
 #----------------------------------------------------------------------------------------------------------
