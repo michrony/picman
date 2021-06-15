@@ -70,7 +70,7 @@
 # Version 05/08/2021: fix -jnt 
 # Version 05/10/2021: enable fromFtp()
 # Version 06/01/2021: now mvt adds image number in the end. This helps to id images easily
-# Version 06/14/2021: enable -gpsg -pv to previeq images withouy IPTC info.
+# Version 06/14/2021: enable -gpsg -pv to preview images without IPTC info.
 #----------------------------------------------------------------------------------------------------------
 import sys 
 import os, platform, glob, json, copy, re, uuid
