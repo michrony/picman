@@ -70,10 +70,16 @@
 # Version 05/08/2021: fix -jnt 
 # Version 05/10/2021: enable fromFtp()
 # Version 06/01/2021: now mvt adds image number in the end. This helps to id images easily
-# Version 06/14/2021: enable -gpsg -pv to preview images without IPTC info.
+# Version 06/14/2021: enable -gpsg -pv to preview images without IPTC info
+# Version 07/24/2021: enable -cr2 to rename cr2 images. Introduce cr2 descriptor.
+# Version 07/26/2021: now -gpsg accepts images with empty IPTC
+# Version 12/21/2021: always use os.system() to call jhead
+#                     correct date format for -gpsg -pv
+#                     enable EXIF FNumber for -gpsg
 #----------------------------------------------------------------------------------------------------------
 import sys 
 import os, platform, glob, json, copy, re, uuid
+import subprocess
 import shutil
 import argparse
 import time
@@ -333,7 +339,11 @@ def GetJpgComments(descname, List, MaxNPics, getimages):
      exit(0)
   comment = ""
   if ("COM" in app): 
-     comment = app["COM"].decode('utf-8')  # needed for python 3
+     comment = ""
+     try:
+        comment = app["COM"].decode('utf-8')  # needed for python 3
+     except Exception as e:
+        print ("GetJpgComments(): Failed to to get comment from %s - %s" % (fname, str(e)))
      comment = comment.replace("\x00", "")
   Res.append([fname, comment])
 
@@ -474,10 +484,13 @@ def JsonDscProcs(fname, MaxNPics, getimages, env):
  IN = JsonDscGet(fname)
  if (IN=={}): return
  
- NOTES = None
+ NOTES = [["", ""]]
  if ("notes" in IN):
     NOTES = IN["notes"]
     del IN["notes"]
+ else: 
+    IN["notes"] = NOTES
+    print("JsonDscProcs(): Added missing notes")
  GPS = None
  if ("gps" in IN):
     GPS = IN["gps"]
@@ -561,8 +574,8 @@ def NotesProcs(IN):
 
  # Check that this is a list of [string, string] pairs
  if (not IN.__class__.__name__=="list"):
-        print ("NotesProcs(): Wrong notes in %s" % (el))
-        pprint.pprint(In[el])
+        print ("NotesProcs(): Wrong notes in %s" % (IN))
+        pprint.pprint(IN)
         return ""
  
  for el in IN:
@@ -627,13 +640,13 @@ def JsondscPutComments(fname):
      if not os.path.exists(fn):
        print ("JsondscPutComments(): stop - %s not found" % (fn))
        return
-     cmd = "jhead -cl \"%s\" %s" % (comment, fn)
-     os.popen(cmd)
+     cmd = "jhead -cl \"%s\" %s > nul" % (comment, fn)
+     os.system(cmd)
      iptcSet(fn, comment, None)
      N = N + 1
      comment = " "
 
- print ("JsondscPutComments(): %s images processed" % (N))
+ print ("JsondscPutComments(): %s images processed with jhead" % (N))
 
  return
 #----------------------------------------------------------------------------------------------------------------\
@@ -994,7 +1007,7 @@ def crGpsDesc(Ljpg):
            date = Y + "-" + M + "-" + D + " " + h + ":" + m + ":" + s
            gpsLine = res[line[1]]
            desc.append([nimg, line[3], date, gpsLine[1] + "," + gpsLine[2], line[2], "y"])
-
+ 
  desc = {"tzdt": dt, "root": desc} 
  desc = json.dumps(desc, indent=1, sort_keys=True) 
 
@@ -1091,6 +1104,7 @@ def crGpsHtm():
  
  for item in root:
            (num, img, date, coord, delta, active) = (item[0], item[1], item[2], item[3], item[4], "y"==item[5])
+           date = date.replace(":", "-", 2)
            exif = exifGet(img)
            capt = iptcGet(img)[0]
            num = "%03d %s" % (num, capt)
@@ -1134,8 +1148,8 @@ def crGpsDescFromJpg(L, preview):
    if (not preview): 
       (tmp, spinsJ) = iptcGet(fn)
    if (spinsJ.strip()==""):
-      print ("crGpsDescFromJpg(): %s - no info in IPTC" % (fn))
-      continue
+      print ("crGpsDescFromJpg(): %s - no info in IPTC, set default" % (fn))
+      spinsJ = '{"tzdt": "*", "root": ["%s", "0,0", 0, "n"]}' % (time)
    try:
       spins = json.loads(spinsJ)
    except Exception as e:
@@ -1255,8 +1269,10 @@ def exifGet(fn):
          elif ('EXIF DateTimeOriginal' in tags): t = str(tags['EXIF DateTimeOriginal'])
          if (int(t[:2])>20 or int(t[:2])<19): t = "" 
          if ('Image Model' in tags):    cameraLens = str(tags['Image Model'])
-         if ('EXIF LensModel' in tags): cameraLens += " " + str(tags['EXIF LensModel'])
-         if ('EXIF FocalLength' in tags): cameraLens += " " + str(tags['EXIF FocalLength'])
+         if ('EXIF LensModel' in tags): cameraLens += "-" + str(tags['EXIF LensModel'])
+         if ('EXIF FocalLength' in tags): cameraLens += "-" + str(tags['EXIF FocalLength'])
+         if ('EXIF FNumber' in tags): cameraLens += "-" + str(eval(str(tags['EXIF FNumber'])))
+         if (cameraLens): cameraLens = cameraLens + " * "
        except Exception as e: 
           print("exifGet() failed: " + fn + " " + str(e))
        if (not f==None): f.close()
@@ -1421,7 +1437,9 @@ def fromFtp(fn, delete):
  if (not "picDir" in IN):
      print("fromFtp: \"picDir\" not found in %s - run picman -ju" % (fn))
      return 
- 
+ if (not IN["picDir"] in IN):
+     print("fromFtp: %s not found" % (IN["picDir"]))
+     return 
  IN = IN[IN["picDir"]] 
  ljpg = []
  for el in IN:
@@ -1451,6 +1469,139 @@ def fromFtp(fn, delete):
      
  print ("fromFtp: images processed: %d" % n)       
      
+ return
+#--------------------------------------------------------------------------------------
+# create cr2 desciptor
+def crCr2Desc():
+ L = glob.glob("./cr2/*.cr2")
+ if (not L):
+    print ("crCr2Desc(): no cr2 files found - return")
+    return {}
+
+ desc = {}    
+ ncr2 = 0
+ for fn in L:
+  fn = fn.replace("\\", "/").lower()
+  dto = ""
+  try:
+    f = open(fn, 'rb')
+    tags = exifread.process_file(f)
+    f.close()
+    dto = str(tags['EXIF DateTimeOriginal'])
+  except Exception as e:
+    print ("crCr2Desc(): can't process %s - skip: %s" % (fn, str(e)))
+    continue
+    
+  if (dto in desc):
+      print("crCr2Desc(): %s has same DateTimeOriginal as %s - skip" % (fn, desc[dto]))
+      continue
+  desc[dto] = fn.replace("\\", "/")
+  ncr2 = ncr2 + 1
+  
+ if not (desc):
+   print ("crCr2Desc(): nothing found - return")
+   return {}
+ 
+ fn = os.getcwd().replace("\\", "/").replace("_", "")
+ fn = fn.split("/")[-1] + ".cr2.txt"
+ 
+ try:
+   f = open(fn, "w")
+   f.write(json.dumps({"cr2": desc}, indent=1, sort_keys=True))
+   f.close()
+ except Exception as e:
+   print ("cCr2Desc(): failed to write %s - %s" % (fn, str(e)))
+   return
+   
+ print ("crCr2Desc(): %s created, %d cr2 files processed" % (fn, ncr2))
+ return desc
+#--------------------------------------------------------------------------------------
+# Rename files in ./cr2 directory in accordance with current naming of *jpg files in the current dir.
+# -- Date Time Original dto is used to id images uniquely. So, there should be no dto duplicates in the current dir.
+#    In ./cr2, each cr2 file should have unique dto.
+#    Files with duplicate dto's are skipped.
+# -- jpg's with exactly the same names as those in cr2 are skipped.
+# -- In ./cr2, all files generated by PSEL from a cr2 file, should should have its name + some additional symbols,
+#    for example: md21.rockville2.016.2021.07.23.cr2, md21.rockville2.016.2021.07.23.xmp, md21.rockville2.016.2021.07.23.p.psd  
+def procCr2(): 
+ Ljpg = glob.glob("./*.jpg") 
+ if (not Ljpg):
+    print("procCr2(): nothing to process")
+    return
+    
+ desc = {}   
+ descFn = glob.glob("*.cr2.txt") 
+ if (not descFn):
+    desc = crCr2Desc()
+    if (not desc): return
+    
+ if (not desc):
+    descFn = descFn[0]
+    try:
+        f = open(descFn, 'r')
+        desc = f.read()
+        f.close()
+        desc = json.loads(desc)
+        desc = desc["cr2"]   
+    except Exception as e:
+       print ("procCr2(): wrong %s - %s" % (descFn, str(e)))
+       return
+ if (descFn):
+    print("procCr2(): using " + str(descFn)) 
+  
+ nRenamed = 0
+ dtoUsed = {}
+ uid = "__" + uuid.uuid4().hex[:8] + "."
+ for jpg in Ljpg:  
+  if ("_t.jpg" in jpg): continue
+  if (jpg.startswith(".\\")):
+      jpg = jpg[2:]
+  if (os.path.exists("./cr2/" + jpg)):
+      print("crCr2Desc(): %s is exact copy from cr2 - skip" % jpg)
+      continue
+  dto = ""
+  try:
+    f = open(jpg, 'rb')
+    tags = exifread.process_file(f)
+    f.close()
+    dto = str(tags['EXIF DateTimeOriginal'])
+  except Exception as e:
+    print ("crCr2Desc(): can't process %s - skip: %s" % (jpg, str(e)))
+    continue
+  if (dto in dtoUsed):
+     print ("crCr2Desc(): skip %s - its dto was already used in %s" % (jpg, dtoUsed[dto]))
+     continue
+  dtoUsed[dto] = jpg   
+  if (not dto in desc):
+    print ("crCr2Desc(): no cr2 for %s - skip" % jpg)
+    continue
+  cr2 = desc[dto]
+  if (not os.path.exists(cr2)):
+      print ("crCr2Desc(): %s no longer exists - skip" % cr2)
+      continue
+  jpgPrefix = jpg[0:-4]
+  tmp = cr2[0:-4].split("/")[-1]
+  # print (jpgPrefix + "-" + tmp) 
+  L = glob.glob(cr2[0:-4] + "*")
+  for src in L:
+      src = src.replace("\\", "/").lower()
+      dst = src.replace(tmp, jpgPrefix)
+      if (src==dst): continue
+      dst = dst.replace("cr2/", "cr2/" + uid)
+      print ("procCr2(): " + jpg + ": " + src + " => " + dst)
+      os.rename(src, dst)
+      nRenamed = nRenamed + 1
+      
+ print("procCr2(): rename stage 2")    
+ for src in glob.glob("./cr2/" + uid + "*"):
+     src = src.replace("\\", "/")
+     dst = src.replace(uid, "")
+     print ("procCr2(): " + src + " => " + dst)
+     if (os.path.exists(dst)): os.remove(dst)
+     os.rename(src, dst)
+      
+ print("procCr2(): %d files renamed" % nRenamed)
+ if (nRenamed>0): crCr2Desc()      
  return
 #====================================================================================================
 if (pyImport==""):
@@ -1491,9 +1642,10 @@ group.add_argument('-ftpd', action="store_true", help="Delete *.jpg images from 
 group.add_argument('-gpsn', action="store_true", help="Create new descriptors *.gps.txt *.gps.htm from Android *.csv files")
 group.add_argument('-gpsu', action="store_true", help="Update descriptors *.gps.txt *.and gps.htm, put *.gps.txt info to image files")
 group.add_argument('-gpsg', action="store_true", help="Create descriptors *.gps.txt *.and gps.htm from *.jpg")
+group.add_argument('-cr2',  action="store_true", help="Rename images in ./cr2 if necessary")
 
 parser.add_argument('-pi',  action="store_true", help="Use Picasa-generated index") 
-parser.add_argument('-pv',   action="store_true", help="preview version of *.gps.txt, iptcs not used")
+parser.add_argument('-pv',  action="store_true", help="Preview version of *.gps.txt, iptcs not used")
 parser.add_argument("-tbg", type=str, help="Background color code for thumbs. Default is #c0c0c0")
 #parser.add_argument("path", type = str, help="files to process")
 
@@ -1611,8 +1763,14 @@ if (args["gpsg"]):
    print ("picman: stop")
    exit(0)
 #----------------------------------------------------------------------------------------------------------
+if (args["cr2"]):
+   procCr2()
+   print ("picman: stop")
+   exit(0)
+#----------------------------------------------------------------------------------------------------------
 if (args["mvt"]):
    cmd = "jhead -n%Y.%m.%d.%H%M%S.%03i *.jpg"
+   print("picman: " + cmd)
    os.system(cmd)
    rmGpsDesc()
    print ("picman: stop")
