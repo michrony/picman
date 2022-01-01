@@ -1,6 +1,6 @@
 OS:             Win10
 <br>
-Python version: 3.9
+Python version: 3.9.1
 <br>
 Utilities used: http://www.sentex.net/~mwandel/jhead/
 <pre>
