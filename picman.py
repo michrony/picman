@@ -82,6 +82,7 @@ import sys
 import os, platform, glob, json, copy, re, uuid
 import shutil
 import argparse
+import time
 from   time import sleep
 from   datetime import datetime, timedelta
 import tzdata
@@ -1105,7 +1106,7 @@ def crGpsHtm():
  
  for item in root:
            (num, img, date, coord, delta, active) = (item[0], item[1], item[2], item[3], item[4], "y"==item[5])
-           date = date.replace(":", "-", 2)
+           #date = date.replace(":", "-", 2)
            exif = exifGet(img)
            capt = iptcGet(img)[0]
            num = "%03d %s" % (num, capt)
@@ -1246,12 +1247,12 @@ def setTime(List):
        ta = os.path.getatime(f)
        t = min(tc, ta)
        #print ("=>tc=%s ta=%s t=%s" % (tc, ta, t))
-       t_ = exifGet(f)[0]
+       t_ = str(exifGet(f)[0])
        try:
           t_ = time.strptime(t_, "%Y:%m:%d %H:%M:%S") 
           t_ = time.mktime(t_)
-       except:
-          print ("setTime(): %s - ignore wrong DateTimeDigitized" % (f))
+       except Exception as e:
+          print ("setTime(): %s - wrong DateTimeDigitized=%s - %s" % (f, t_, str(e)))
        if (t_!=""): t = t_   
        os.utime(f, (t, t)) # set mod,access times   
 
