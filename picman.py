@@ -195,24 +195,24 @@ def getimage(fname):
 # so that each row has no more than MaxNPics pics.
 # Returns the rearraged list and its # emty slots 
 def JsondscRegroup(L, MaxNPics):
-
  # Prepare list of comment-iems groups 
  groups = []
  for row in L:
+      #print ("row=" + str(row))
+      curr = []
       for el in row:
         if (not el.endswith(".jpg") and len(curr)>0): 
            groups.append(curr)
            curr = []
         curr.append(el)
-        if (len(curr)>0): groups.append(curr)  
-
+      if (len(curr)>0): groups.append(curr)  
  LOut = []
  Out  = []
  NPics    = 0
  OutNPics = 0
  MaxLen   = MaxNPics
  for gr in groups:
-    #print "MaxNPics: %s OutNPics: %s %s" % (MaxNPics, OutNPics, str(gr))
+    #print ("MaxNPics: %s OutNPics: %s %s" % (MaxNPics, OutNPics, str(gr)))
     NPics = NPics + len(gr)-1
     if (OutNPics>=MaxNPics):
        LOut.append(Out)                # LOut <= Out
