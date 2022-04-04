@@ -74,9 +74,10 @@
 # Version 07/24/2021: enable -cr2 to rename cr2 images. Introduce cr2 descriptor.
 # Version 07/26/2021: now -gpsg accepts images with empty IPTC
 # Version 12/21/2021: always use os.system() to call jhead
-#                     correct date format for -gpsg -pv
 #                     enable EXIF FNumber for -gpsg
 # Version 03/16/2022: enable cr2MarkUnused()
+# Version 04/04/2022: fix date format for -gpsg -pv
+#                     fix os.rename() issue in -cr2
 #----------------------------------------------------------------------------------------------------------
 import sys 
 import os, platform, glob, json, copy, re, uuid
@@ -1044,7 +1045,7 @@ def crGpsHtm():
  if (desc==None): return
  
  if (not "tzdt" in desc or desc["tzdt"]=="" or not "root" in desc):
-   print ("crGpsDesc(): can't create gps.htm descriptor")
+   print ("crGpsDesc(): can't create gps.htm")
    return
 
  # prepare html
@@ -1106,7 +1107,9 @@ def crGpsHtm():
  
  for item in root:
            (num, img, date, coord, delta, active) = (item[0], item[1], item[2], item[3], item[4], "y"==item[5])
-           #date = date.replace(":", "-", 2)
+           date = date.replace("-", ":")
+           date = date.replace(":", "-", 2)
+           #print("2 " + date)
            exif = exifGet(img)
            capt = iptcGet(img)[0]
            num = "%03d %s" % (num, capt)
@@ -1600,10 +1603,12 @@ def procCr2():
  for src in glob.glob("./cr2/" + uid + "*"):
      src = src.replace("\\", "/")
      dst = src.replace(uid, "")
-     print ("procCr2(): " + src + " => " + dst)
-     if (os.path.exists(dst)): os.remove(dst)
-     os.rename(src, dst)
-      
+     try: 
+      os.replace(src, dst)
+      print ("procCr2(): " + src + " => " + dst)
+     except Exception as e:
+      print ("procCr2(): failed " + src + " => " + dst  + " - " + str(e))
+
  print("procCr2(): %d files renamed" % nRenamed)
  cr2MarkUnused(Ljpg)
  if (nRenamed>0): 
@@ -1626,8 +1631,7 @@ def cr2MarkUnused(Ljpg):
      
      dst = fn.replace("/cr2/", "/cr2/##")
      print ("cr2MarkUnused(): " + fn + " => " + dst)
-     if (os.path.exists(dst)): os.remove(dst)          
-     os.rename(fn, dst)
+     os.replace(fn, dst)
  return
 #====================================================================================================
 if (pyImport==""):
