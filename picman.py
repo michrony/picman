@@ -78,6 +78,7 @@
 # Version 03/16/2022: enable cr2MarkUnused()
 # Version 04/04/2022: fix date format for -gpsg -pv
 #                     fix os.rename() issue in -cr2
+# Version 05/16/2022: disable saving cr2 descriptor to ascii file
 #----------------------------------------------------------------------------------------------------------
 import sys 
 import os, platform, glob, json, copy, re, uuid
@@ -500,6 +501,7 @@ def JsonDscProcs(fname, MaxNPics, getimages, env):
     del IN["gps"]
  gpsd = getGpsDesc()
  if (gpsd): GPS = gpsd
+ if (not gpsd): GPS = None
  
  INkey = None
  if ("picDir" in IN):
@@ -1508,18 +1510,7 @@ def crCr2Desc():
    print ("crCr2Desc(): nothing found - return")
    return {}
  
- fn = os.getcwd().replace("\\", "/").replace("_", "")
- fn = fn.split("/")[-1] + ".cr2.txt"
- 
- try:
-   f = open(fn, "w")
-   f.write(json.dumps({"cr2": desc}, indent=1, sort_keys=True))
-   f.close()
- except Exception as e:
-   print ("cCr2Desc(): failed to write %s - %s" % (fn, str(e)))
-   return
-   
- print ("crCr2Desc(): %s created, %d cr2 files processed" % (fn, ncr2))
+ print ("crCr2Desc(): cr2 files processed: " + str(ncr2))
  return desc
 #--------------------------------------------------------------------------------------
 # Rename files in ./cr2 directory in accordance with current naming of *jpg files in the current dir.
@@ -1535,25 +1526,8 @@ def procCr2():
     print("procCr2(): nothing to process")
     return
     
- desc = {}   
- descFn = glob.glob("*.cr2.txt") 
- if (not descFn):
-    desc = crCr2Desc()
-    if (not desc): return
-    
- if (not desc):
-    descFn = descFn[0]
-    try:
-        f = open(descFn, 'r')
-        desc = f.read()
-        f.close()
-        desc = json.loads(desc)
-        desc = desc["cr2"]   
-    except Exception as e:
-       print ("procCr2(): wrong %s - %s" % (descFn, str(e)))
-       return
- if (descFn):
-    print("procCr2(): using " + str(descFn)) 
+ desc = crCr2Desc()
+ if (not desc): return
   
  nRenamed = 0
  dtoUsed = {}
