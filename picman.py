@@ -79,6 +79,9 @@
 # Version 04/04/2022: fix date format for -gpsg -pv
 #                     fix os.rename() issue in -cr2
 # Version 05/16/2022: disable saving cr2 descriptor to ascii file
+# Version 08/13/2022: enable movePicasaIndex()
+# Version 08/19/2022: enable loadNotes(). When notes are prepared separately, load them to notes item
+# Version 09/03/2022: use -jnb instead of -jnt with descriptor *.body.txt
 #----------------------------------------------------------------------------------------------------------
 import sys 
 import os, platform, glob, json, copy, re, uuid
@@ -130,9 +133,8 @@ else:
 # pip install Pillow
 # pip install iptcinfo
 # pip install validators
-
 #----------------------------------------------------------------------------------------------------
-# all symbols after x'80' => HTML encoding $#xxx;
+# All symbols after x'80' => HTML encoding $#xxx;
 def utf8(str): 
     if (hasattr(str, "decode")): return str.decode('utf-8').encode('ascii', 'xmlcharrefreplace')
     else: return str.encode('ascii', 'xmlcharrefreplace').decode('utf-8')
@@ -260,18 +262,18 @@ def JsondscRegroupMin(Rows, MaxNPics):
 
  return LOut
 #----------------------------------------------------------------------------------------------------------
-# *.dsc.txt => *.dscj.txt
+# *.body.txt => *.dscj.txt
 # Convert old descriptors to JSON
-def JsondscFromText(dscname, MaxNPics, getimages):
- if (not dscname.endswith(".dsc.txt")): 
-    print ("picman.JsondscFromText: wrong %s" % (dscname))
-    return
- F = open(dscname, "r", encoding='utf8')
- try:    L = F.readlines()
- except: 
-         print ("JsondscFromText(): failed to read %s" % (dscname))
+def body2dscj(fn, MaxNPics, getimages):
+ F = open(fn, "r", encoding='utf8')
+ try: L = F.readlines()
+ except Exception as e: 
+         print ("body2dscj(): failed to read %s - %s" % (dscname, str(e)))
          return
- 
+ if (len(L)==0):
+         print ("body2dscj(): empty " + fname)
+         return
+
  # ASCII descriptor => list of comment-pics rows 
  Rows   = []
  header = []
@@ -312,19 +314,19 @@ def JsondscFromText(dscname, MaxNPics, getimages):
  LOut = JsondscRegroupMin(Rows, MaxNPics)
 
  # Prepare JSON descrptor file 
- root = dscname.replace(".dsc.txt", "")
+ root = fn.replace(".body.txt", "")
  Out  = {"picDir": root, "notes": notes, root: LOut}
- fn   = dscname.replace(".dsc.txt", ".dscj.txt")
+ fn   = fn.replace(".body.txt", ".dscj.txt")
  desc = json.dumps(Out, indent=1, sort_keys=True)
- # desc = header + "<!--dscj\n" + desc + "\n-->\n"
  try:
    f = open(fn, "w", encoding='utf8')
    f.write(utf8(str(desc)))
    f.close()
  except Exception as e:
-   print ("crGpsDesc(): failed to write %s - %s" % (fn, str(e)))
+   print ("body2dscj(): failed to write %s - %s" % (fn, str(e)))
    return
-
+   
+ return
  #JsonDscProcs(fname, 0, getimages, None) # process new descriptor immediately
 #----------------------------------------------------------------------------------------------------------
 # Get comments from jpg files and their IPTC.Caption's 
@@ -480,6 +482,29 @@ def JsonDscGet(fname):
    return {}
  
  return IN
+#----------------------------------------------------------------------------------------------------------------
+def loadNotes(fnname):
+ res = [["", ""]]
+ try:
+   F   = open(fname, "r", encoding='utf8')
+   F_  = utf8(F.read())
+   if (not "<!--dscj" in F_): return res
+   F_  = F_.split("<!--dscj")[0].strip().split("\n")
+ except Exception as e:
+   print ("loadNotes(): Can't get %s - %s" % (fname, str(e)))
+   return res
+ 
+ res  = []
+ http = "http://"
+ for el in F_: 
+  if (": http://" in el): el = el.split(": http://")
+  else: 
+        http = "https://"
+        el = el.split(": https://")
+  if (len(el)==1): res.append([el[0], ""])
+  else: res.append([el[0], http + el[1]])
+   
+ return res
 #----------------------------------------------------------------------------------------------------------------\
 # Update *.dscj.txt to include HTML tables
 # Create *.dscj.htm to view the images in the current directory
@@ -492,9 +517,8 @@ def JsonDscProcs(fname, MaxNPics, getimages, env):
  if ("notes" in IN):
     NOTES = IN["notes"]
     del IN["notes"]
- else: 
-    IN["notes"] = NOTES
-    print("JsonDscProcs(): Added missing notes")
+ else: NOTES = loadNotes(fname)	
+
  GPS = None
  if ("gps" in IN):
     GPS = IN["gps"]
@@ -507,9 +531,6 @@ def JsonDscProcs(fname, MaxNPics, getimages, env):
  if ("picDir" in IN):
     INkey = IN["picDir"]
  ink = list(IN.keys())
- if (INkey==None and len(ink)!=1): 
-    print ("JsonDscProcs(): Wrong #keys in %s" % (fname))
-    return 
  if (INkey==None): INkey = ink[0]
  IN1 = IN[INkey]
  
@@ -523,7 +544,7 @@ def JsonDscProcs(fname, MaxNPics, getimages, env):
    Res_norm = Res_norm + norm
    Res_view = Res_view + view
  
- Res_notes = NotesProcs(NOTES)
+ Res_notes = notesProcs(NOTES)
    
  # Write .dscj.txt
  IN1 = {INkey: IN1, "picDir": INkey}
@@ -532,9 +553,11 @@ def JsonDscProcs(fname, MaxNPics, getimages, env):
  if (GPS):   IN1["gps"] = GPS
  
  print ("JsonDscProcs(): env=" + str(env))
- jdump    = json.dumps(IN1, indent=1, sort_keys=True)
+ jdump  = json.dumps(IN1, indent=1, sort_keys=True)
+ spanId = "<span id=\"picDir=%s\"/>" % (INkey)
+
  if (env): 
-    Res_norm = "<!--%s\n%s\n-->\n%s" % ("dscj", jdump, Res_norm)
+    Res_norm = "<!--%s\n%s\n-->\n%s\n%s\n" % ("dscj", jdump, spanId, Res_norm)
     Res_norm = Res_notes.replace("<br>", "") + Res_norm
  else: 
     Res_norm = jdump
@@ -559,8 +582,7 @@ def JsonDscProcs(fname, MaxNPics, getimages, env):
    print ("JsonDscProcs(): failed to read " + fmtfile)
    return
 
- Res_view = Res_notes + Res_view
- Res_view = "<!--%s\n%s\n-->\n%s" % ("dscj", json.dumps(IN, indent=1, sort_keys=True), Res_view)
+ Res_view = "<!--%s\n%s\n-->\n%s\n%s" % ("dscj", json.dumps(IN, indent=1, sort_keys=True), spanId, Res_view)
  if (fmt!=""): Res_view = fmt % (INkey, INkey, Res_view)
  fname_view = INkey + ".dsc.htm"
  try:
@@ -575,30 +597,30 @@ def JsonDscProcs(fname, MaxNPics, getimages, env):
  return
 #----------------------------------------------------------------------------------------------------------------
 # Check and process the notes pairs
-def NotesProcs(IN):
+def notesProcs(IN):
 
  # Check that this is a list of [string, string] pairs
  if (not IN.__class__.__name__=="list"):
-        print ("NotesProcs(): Wrong notes in %s" % (IN))
+        print ("notesProcs(): Wrong notes in %s" % (IN))
         pprint.pprint(IN)
         return ""
  
  for el in IN:
         if (not el.__class__.__name__=="list"):
-           print ("NotesProcs(): Wrong note %s" % (el))
+           print ("notesProcs(): Wrong note %s" % (el))
            pprint.pprint(el_)
            return ""
         if (len(el)!=2):
-           print ("NotesProcs(): Wrong note %s" % (el))
+           print ("notesProcs(): Wrong note %s" % (el))
            pprint.pprint(el)
            return ""
         str = el[1].__class__.__name__=="str" or el[1].__class__.__name__=="unicode"  
         if (el[0].__class__.__name__!="str" and not str ):
-           print ("NotesProcs(): Wrong note (%s, %s) in %s" % (el[0].__class__.__name__, el[1].__class__.__name__, el))
+           print ("notesProcs(): Wrong note (%s, %s) in %s" % (el[0].__class__.__name__, el[1].__class__.__name__, el))
            pprint.pprint(el)
            return ""
         if (not el[1]=="" and not validators.url(el[1])):
-           print ("NotesProcs(): Wrong note [%s, %s]" % (el[0], el[1]))
+           print ("notesProcs(): Wrong note [%s, %s]" % (el[0], el[1]))
            return ""
   
  res = ""
@@ -612,8 +634,8 @@ def NotesProcs(IN):
            continue
         res = res + el[0] + ": " + el[1] + "<br>\n"
  
- #print ("NotesProcs(): res=" + res;)
- print ("NotesProcs(): %d notes processed" % (len(IN)))
+ #print ("notesProcs(): res=" + res;)
+ print ("notesProcs(): %d notes processed" % (len(IN)))
  return res
 #----------------------------------------------------------------------------------------------------------------
 # Put comments into jpg's for this JSON descriptor using jhead
@@ -659,17 +681,17 @@ def JsondscPutComments(fname):
 def JsondscRenum(fname):
 
  IN = JsonDscGet(fname)
+ if (not "picDir" in IN): 
+    print ("JsondscRenum(%s): no picDir" % (fname))
+    return []
+ INkey = IN["picDir"]
+ 
+ print ("JsondscRenum(): %s, %s" % (fname, INkey))
  NOTES = []
  if ("notes" in IN):
     NOTES = IN["notes"]
     del IN["notes"]
  
- ink = list(IN.keys()) 
- if (len(ink)!=1): 
-    print ("JsondscRenum(%s): wrong descriptor len=%d" % (fname, len(ink)))
-    return []
-
- INkey = ink[0]
  IN    = IN[INkey]
  Pics  = []
  OUT   = []
@@ -679,12 +701,11 @@ def JsondscRenum(fname):
          OUT.append(el)
          if (el.endswith(".jpg")): 
             if (not os.path.exists(el)): Wrong.append(el) 
-            Pics.appenad(el)
+            Pics.append(el)
             el_t  = el[0:len(el)-4] + "_t.jpg"          #remove thumbs
             el__t = el[0:len(el)-4] + "__t.jpg"
             if (os.path.exists(el_t)):  os.remove(el_t)
             if (os.path.exists(el__t)): os.remove(el__t)
-
  if (len(Wrong)>0): 
     print ("JsondscRenum() failed. The following files do not exist: %s" % (str(Wrong)))
     return []
@@ -720,17 +741,36 @@ def JsondscRenum(fname):
  print ("JsondscRenum(): %s images processed. %s extra images removed" % (len(Pics), N-len(Pics)-1))
 
  return Pics
-#----------------------------------------------------------------------------------------------------------------\
-def procPicasaIndex(fname):
+#----------------------------------------------------------------------------------------------------------------
+def movePicasaIndex():
+ pIndex = "index.html"
+ if (os.path.exists(pIndex)): return True # already in place
+ 
+ picasaDir = os.getenv("picman.picasa", None)
+ if (not picasaDir):
+    print("movePicasaIndex(): picman.picasa not set")
+    return False
+ pIndex = picasaDir + "/" + os.getcwd().replace("\\", "/").split("/")[-1] + "/index.html"
+ if (not os.path.exists(pIndex)):
+    print("movePicasaIndex(): no " + pIndex)
+    return False
+ shutil.move(pIndex, ".")
+ 
+ print ("movePicasaIndex(): moved " + pIndex)
+ 
+ return True
+#----------------------------------------------------------------------------------------------------------------
+def procPicasaIndex():
+ pIndex = "index.html"
+ print ("procPicasaIndex(): try using Picasa-generated %s" % (pIndex))
 
- print ("procPicasaIndex(): try using Picasa-generated %s" % (fname))
  L = []
- if (not os.path.exists(fname)): 
-    print ("procPicasaIndex(): %s not found" % (fname))
+ if (not movePicasaIndex()): 
+    print ("procPicasaIndex(): %s not found" % (pIndex))
     return L
 
  try:
-    F  = open(fname, "r", encoding='utf8')
+    F  = open(pIndex, "r", encoding='utf8')
     F_ = utf8(F.read()).lower()
     F.close()
     L_ = []
@@ -750,14 +790,14 @@ def procPicasaIndex(fname):
         L.append(item)
  except Exception as e:
     L = []
-    print ("procPicasaIndex(): wrong %s: %s" % (fname, str(e)) )
+    print ("procPicasaIndex(): wrong %s: %s" % (pIndex, str(e)) )
 
- if (len(L)==0): print ("procPicasaIndex(): cannot use %s" % (fname))
+ if (len(L)==0): print ("procPicasaIndex(): cannot use %s" % (pIndex))
  else:
-    fnbak = fname.replace(".html", ".bak")
+    fnbak = pIndex.replace(".html", ".bak")
     if (os.path.exists(fnbak)): os.remove(fnbak)
-    os.rename(fname, fnbak)
-    print ("procPicasaIndex(): %s ===> %s" % (fname, fnbak))
+    os.rename(pIndex, fnbak)
+    print ("procPicasaIndex(): %s ===> %s" % (pIndex, fnbak))
  
  return L
 #----------------------------------------------------------------------------------------------------------------\
@@ -767,9 +807,9 @@ def rename(addDate, prefix, List):
  fname = ""
  if (".htm" in List[0]): fname = List[0] 
  if (fname!=""):  
-    List = procPicasaIndex(fname)
+    List = procPicasaIndex()
  if (fname!="" and len(List)>0):
-    print ("rename(): use %s, %d items" % (fname, len(List)))
+    print ("rename(): used %s, %d items" % (fname, len(List)))
 
  if (len(List)==0):
     print ("rename(): nothing to process")
@@ -1404,7 +1444,7 @@ def getFtpBlogDir():
  blogs = blogs.intersection(curr) 
  if (len(blogs)>0): return ftpDir + "/" + blogs.pop()
  else: 
-      print ("getFtpBlogDir(): fail")
+      print ("getFtpBlogDir(): fail - ftpDir=" + ftpDir)
       return ""
 #----------------------------------------------------------------------------------------------------
 # Copy images from the current dir to ftp/<blog>/images
@@ -1635,7 +1675,7 @@ group.add_argument('-T',    action="store_true", help="Set file mod time from it
 group.add_argument('-tS',   action="store_true", help="Create square thumbs: size 240")
 group.add_argument('-ts',   type=int, help="Create square thumbs with given size")
 group.add_argument('-jn',   action="store_true", help="Create new descriptor *.dscj.txt")
-group.add_argument('-jnt',  action="store_true", help="Create new descriptor *.dscj.txt from *.dsc.txt")
+group.add_argument('-jnb',  action="store_true", help="Create new descriptor *.dscj.txt from *.body.txt")
 group.add_argument('-ju',   action="store_true", help="Update existing descriptor *.dscj.txt")
 group.add_argument('-jue',  action="store_true", help="Same as -ju plus create envelope around json in *.dscj.txt")
 group.add_argument('-jun',  action="store_true", help="Recreate descriptor *.dscj.txt, renumber images") 
@@ -1651,7 +1691,6 @@ group.add_argument('-cr2',  action="store_true", help="Rename images in ./cr2 if
 parser.add_argument('-pi',  action="store_true", help="Use Picasa-generated index") 
 parser.add_argument('-pv',  action="store_true", help="Preview version of *.gps.txt, iptcs not used")
 parser.add_argument("-tbg", type=str, help="Background color code for thumbs. Default is #c0c0c0")
-#parser.add_argument("path", type = str, help="files to process")
 
 args = vars(parser.parse_args())
 #print (args)
@@ -1681,9 +1720,9 @@ if (args["tbg"]!=None): bgcolor = args["tbg"]
 
 env       = args["jue"]
 jnew      = args["jn"]
-jnewtext  = args["jnt"]
+jnewtext  = args["jnb"]
 jnum      = args["jun"]
-jproc     = args["ju"] or args["jue"] or args["jnt"]
+jproc     = args["ju"] or args["jue"] or args["jnb"]
 jprocput  = args["jp"]
 pi        = args["pi"]
 preview   = args["pv"]
@@ -1691,16 +1730,15 @@ preview   = args["pv"]
 getimages    = False
 jnewMaxNPics = 6
 
-List = glob.glob("*") # + glob.glob(".*jpg")  
-if (pi):
-   List = [el for el in List if ("index.htm" in el.lower())]
+List = glob.glob("*")
+if (pi): List = ["index.html"]
 else: 
    List = [el for el in List if (el.lower().endswith(".jpg"))] # use only jpg files
-List.sort()
-
+   List.sort()
+   
 if (len(List)==0 and not jproc and not jnewtext and not args["ftp2"]):
-   print ("picman: Nothing to process")
-   print (help)
+   print ("picman: No images to process")
+   #print (help)
    exit(0)
 #----------------------------------------------------------------------------------------------------------
 if (jnew):
@@ -1711,12 +1749,12 @@ if (jnew):
    exit(0)
 #----------------------------------------------------------------------------------------------------------
 if (jnewtext):
-   fname = desc + ".dsc.txt"
+   fname = desc + ".body.txt"
    if (not os.path.isfile(fname)):
-       print ("picman: no %s - stop" % (fname))
+       open(fname, 'a').close()   
+       print ("picman: created brand new %s - stop" % (fname))
        exit(0)
-   print ("picman: prepare new json descriptor from: " + fname)
-   JsondscFromText(fname, jnewMaxNPics, getimages)
+   body2dscj(fname, jnewMaxNPics, getimages)
    print ("picman: stop")
    exit(0)
 #----------------------------------------------------------------------------------------------------------
