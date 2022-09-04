@@ -11,6 +11,7 @@ usage: picman.py [-h]
 Notes: (1) *.dscj.txt should be always present in curr dir. It is used for jpg
 renaming and keeps JSON descriptor. If IPTC is empty, jpg comment is used.
 
+optional arguments:
   -h, --help  show this help message and exit
   -mv         Rename *.jpg files to prefix.nnn.ext
   -mvc        Rename *.jpg files to lower case, replace non-alphanum characters by dots
