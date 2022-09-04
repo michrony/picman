@@ -5,7 +5,7 @@ Python version: 3.9.1
 Utilities used: http://www.sentex.net/~mwandel/jhead/
 <pre>
 usage: picman.py [-h]
-                 (-mv | -mvc | -mvt | -mvd | -T | -tS | -ts TS | -jn | -jnt | -ju | -jue | -jun | -jp | -2ftp | -ftp2 | -ftpd | -gpsn | -gpsu | -gpsg | -cr2)
+                 (-mv | -mvc | -mvt | -mvd | -T | -tS | -ts TS | -jn | -jnb | -ju | -jue | -jun | -jp | -2ftp | -ftp2 | -ftpd | -gpsn | -gpsu | -gpsg | -cr2)
                  [-pi] [-pv] [-tbg TBG]
 
 Notes: (1) *.dscj.txt should be always present in curr dir. It is used for jpg
