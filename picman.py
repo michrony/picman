@@ -1,4 +1,4 @@
-#!/usr/bin/python3.9
+#!/usr/bin/python3.11
 # picman.py
 
 # Picture Manager: process image descriptors, rename, create thumbs
@@ -50,8 +50,8 @@
 # Version 12/17/2018: update utf8()
 # Version 08/19/2019: begin enabling gps captions
 # Version 09/04/2019: disable IPTC warnings
-# Version 09/15/2019: gps captions ver 1: introduced *.gps.txt, *.gps, .htm descriptors
-# Version 09/21/2019: gps update / fix: -gpsn, -ghpsg, -gpsu
+# Version 09/15/2019: gps captions ver 1: introduced *.gps.txt, *.htm descriptors
+# Version 09/21/2019: gps update / fix: -gpsn, -gpsg, -gpsu
 #                     -mvt removed, use -mvd instead
 # Version 10/06/2019: restored -mvt using jhead. It is needed to merge images coming from multiple cameras
 #                     added rmGpsDesc() to remove gps descriptors after image rename
@@ -90,8 +90,10 @@
 # Version 01/14/2024: fix dummies processing for -jn, -ju, -jue
 version = "01/26/2024"  # fix prepDummyThumbs()
 version = "03/25/2024"  # enable mvCr2()
-version = "07/22/2024"  # enable -gpsgh
-                        # introduce getDescHead()
+version = "07/23/2024"  # enable -gpsgh
+                        # enable getDescHead()
+                        # enable runMkexif() to create exif for -mvc
+                        # enable makeDatesCPU() for tag datesCPU in *.dscj.txt
 # ----------------------------------------------------------------------------------------------------------
 import sys
 import os, platform, glob, json, copy, re, uuid
@@ -155,6 +157,64 @@ def utf8(str):
         return str.encode('ascii', 'xmlcharrefreplace').decode('utf-8')
 
 # ----------------------------------------------------------------------------------------------------------
+# Set modified, access date time for fn. date is yyyy-mm-dd
+def setModDate(fn, date):
+ if (not date): return
+ date = date.split("-")
+ if len(date)==3:
+    [y, m, d] = [int(date[0]), int(date[1]), int(date[2])]
+    t = datetime(y, m, d)
+    t = time.mktime(t.timetuple())
+    os.utime(fn, (t, t))
+
+ return
+
+# ----------------------------------------------------------------------------------------------------
+# Return yyyy-dd-mm mod date for fn
+def getModDate(fn):
+    if (not os.path.exists(fn)): return ""
+
+    res = os.path.getmtime(fn)
+    res = datetime.fromtimestamp(res)
+    res = str(res)[0:10]
+
+    return res
+
+# ----------------------------------------------------------------------------------------------------------
+def getMaxModDate():
+    res = "2000-01-01"
+    l = glob.glob("*.jpg")
+    gotit = False
+    for el in l:
+        if ("_t.jpg" in el): continue
+        t = getModDate(el)
+        if t > res:
+            gotit = True
+            res = t
+    if (not gotit): res = ""
+
+    return res
+
+
+#----------------------------------------------------------------------------------------------------------
+# Prepare tag makeDatesCPU
+# new = True - from scratch, False - for old *.dscj.txt without tag datesCPU
+def makeDatesCPU(new):
+    head = getDescHead()
+    now  = datetime.now().strftime("%Y-%m-%d")
+    dateCreated = getModDate(head + ".info.txt")  # for movies, set date created = date modified for *.info.txt
+    if (not dateCreated): dateCreated = getMaxModDate()  # if no *.info.txt
+    dateProc = now
+    dateUpd  = ""
+    if (not new):
+        dateProc = getModDate(head + ".dscj.txt")
+        dateUpd  = now
+    res = [dateCreated, dateProc, dateUpd]
+
+    print ("makeDatesCPU(%s): %s" % (new, res))
+    return res
+
+#----------------------------------------------------------------------------------------------------------
 def getDescHead():
     res = os.getcwd().replace("\\", "/").replace("_", "")
     res = res.split("/")[-1]
@@ -276,7 +336,6 @@ def jsonDscRegroup(L, MaxNPics):
 
     return [LOut, NEmpty]
 
-
 # ----------------------------------------------------------------------------------------------------------
 # Choose regrouping with minimal NEmpty
 def jsonDscRegroupMin(Rows, MaxNPics):
@@ -344,9 +403,10 @@ def body2dscj(fn, MaxNPics, getimages):
     # print Rows
     LOut = jsonDscRegroupMin(Rows, MaxNPics)
 
-    # Prepare JSON descrptor file
+    # Prepare JSON descriptor file
     root = fn.replace(".body.txt", "")
     Out = {"picDir": root, "notes": notes, root: LOut}
+    Out["datesCPU"] = makeDatesCPU(True)
     fn = fn.replace(".body.txt", ".dscj.txt")
     desc = json.dumps(Out, indent=1, sort_keys=True)
     try:
@@ -420,6 +480,8 @@ def getJpgComments(descname, List, MaxNPics, getimages, bgColor):
 
     # Prepare the descriptors
     LOut = {descname: LOut1, "picDir": descname}
+    datesCPU = makeDatesCPU(True)
+    LOut["datesCPU"] = datesCPU
     LOut["notes"] = [["", ""], ["", ""]]
 
     # try to get notes from pre-existing desc
@@ -575,6 +637,7 @@ def jsonDscProcs(fname, MaxNPics, getimages, env, bgColor):
     if ("gps" in IN):
         GPS = IN["gps"]
         del IN["gps"]
+
     gpsd = getGpsDesc()
     if (gpsd): GPS = gpsd
     if (not gpsd): GPS = None
@@ -604,8 +667,11 @@ def jsonDscProcs(fname, MaxNPics, getimages, env, bgColor):
     if (NOTES): IN1["notes"] = NOTES
     if (GPS):   IN1["gps"] = GPS
 
-    for el in ["dates", "title", "url"]:
-        if (el in IN): IN1[el] = IN[el]
+    for el in ["datesCPU", "title", "url", "flags"]:  # copy these tags to desc
+        if (el in IN):
+            IN1[el] = IN[el]
+    if (not "datesCPU" in IN1):
+        IN1["datesCPU"] = makeDatesCPU(False)
 
     IN1 = prepDummyThumbs(IN1, bgColor)
 
@@ -620,10 +686,14 @@ def jsonDscProcs(fname, MaxNPics, getimages, env, bgColor):
         Res_norm = jdump
 
     fname_norm = INkey + ".dscj.txt"
+    date = IN1["datesCPU"][2]
+    if (not date):
+        date = IN1["datesCPU"][1]
     try:
         F = open(fname_norm, "w", encoding='utf8')
         F.write(utf8(Res_norm))
         F.close()
+        setModDate(fname_norm, date)
     except Exception as e:
         print("jsonDscProcs(): failed to write %s - %s" % (fname_norm, e))
 
@@ -864,13 +934,13 @@ def movePicasaIndex():
     if (not picasaDir):
         print("movePicasaIndex(): picman.picasa not set")
         return False
-    pIndex = picasaDir + "/" + os.getcwd().replace("\\", "/").split("/")[-1] + "/index.html"
+    pIndex = picasaDir + "/_" + getDescHead() + "/index.html"
     if (not os.path.exists(pIndex)):
-        print("movePicasaIndex(): no " + pIndex)
+        print("movePicasaIndex(): can't find " + pIndex)
         return False
     shutil.move(pIndex, ".")
 
-    print("movePicasaIndex(): moved " + pIndex)
+    print("movePicasaIndex(): %s => ./index.html" % (pIndex))
 
     return True
 
@@ -913,9 +983,16 @@ def procPicasaIndex():
         fnbak = pIndex.replace(".html", ".bak")
         if (os.path.exists(fnbak)): os.remove(fnbak)
         os.rename(pIndex, fnbak)
-        print("procPicasaIndex(): %s ===> %s" % (pIndex, fnbak))
+        print("procPicasaIndex(): %s => %s" % (pIndex, fnbak))
 
     return L
+
+# ----------------------------------------------------------------------------------------------------------------\
+def runMkexif():
+    cmd = "jhead -mkexif *.jpg"
+    print("runMkexif(): " + cmd)
+    os.system(cmd)
+    return
 
 # ----------------------------------------------------------------------------------------------------------------\
 # Rename files in List to: prefix.nnn[.date].ext
@@ -1217,12 +1294,12 @@ def findLeftCsv(L, ind):
         if (L[i][4].startswith("gps")): return i
     return -1
 
-
 # --------------------------------------------------------------------------------------
 def findRightCsv(L, ind):
     for i in range(ind + 1, len(L)):
         if (L[i][4].startswith("gps")): return i
     return -1
+
 
 # --------------------------------------------------------------------------------------
 # Create *.gps.htm from json descriptor *.gps.txt
@@ -1795,7 +1872,6 @@ def procCr2():
         crCr2Desc()
     return
 
-
 # ====================================================================================================
 def cr2MarkUnused(Ljpg):
     Lbase = []
@@ -1899,18 +1975,18 @@ group.add_argument('-ftpd', action="store_true", help="Delete *.jpg images from 
 group.add_argument('-gpsn', action="store_true",
                    help="Create new descriptors *.gps.txt *.gps.htm from Android *.csv files")
 group.add_argument('-gpsu', action="store_true",
-                   help="Update descriptors *.gps.txt *.and gps.htm, put *.gps.txt info to image files")
-group.add_argument('-gpsg', action="store_true", help="Create descriptors *.gps.txt *.and gps.htm from *.jpg")
+                   help="Update descriptors *.gps.txt, *.gps.htm, put *.gps.txt info to image files")
+group.add_argument('-gpsg', action="store_true", help="Create descriptors *.gps.txt, *.gps.htm from *.jpg")
 group.add_argument('-gpsgh', action="store_true", help="Create descriptor gps.htm from *.jpg")
 group.add_argument('-cr2', action="store_true", help="Rename images in ./cr2 if necessary")
 group.add_argument('-mvcr2', action="store_true", help="./cr2/*.jpg => ./*.jpg")
 
+parser.add_argument('-ex', action="store_true", help="Run mkexif for -mvc")
 parser.add_argument('-pi', action="store_true", help="Use Picasa-generated index")
 parser.add_argument('-pv', action="store_true", help="Preview version of *.gps.txt, iptcs not used")
 parser.add_argument("-tbg", type=str, help="Background color code for thumbs. Default is #c0c0c0")
 
 args = vars(parser.parse_args())
-# print (args)
 
 desc = setDesc()
 print("picman: using " + desc)
@@ -2056,6 +2132,7 @@ if (Rename):
     if (args["mvc"]): desc = ""
     print("picman: %d processed images" % (rename(addDate, desc, List)))
     rmGpsDesc()
+    if (args["mvc"] and args["ex"]): runMkexif()
     print("picman: stop")
     exit(0)
 # ----------------------------------------------------------------------------------------------------------
