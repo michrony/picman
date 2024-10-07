@@ -94,6 +94,7 @@ version = "07/23/2024"  # enable -gpsgh
                         # enable getDescHead()
                         # enable runMkexif() to create exif for -mvc
                         # enable makeDatesCPU() for tag datesCPU in *.dscj.txt
+version = "09/12/2024"  # enable -tsa
 # ----------------------------------------------------------------------------------------------------------
 import sys
 import os, platform, glob, json, copy, re, uuid
@@ -107,14 +108,15 @@ from zoneinfo import ZoneInfo
 from builtins import str
 import pprint
 import csv
-import base64
+#import base64
 import exifread
+import arrow
 
 pyVer = platform.python_version()
 pyImport = ""
 if pyVer[0] <= "2":
     try:
-        from iptcinfo import IPTCInfo
+        #from iptcinfo import IPTCInfo
         from PIL import Image
         import validators
     except Exception as e:
@@ -357,10 +359,10 @@ def body2dscj(fn, MaxNPics, getimages):
     try:
         L = F.readlines()
     except Exception as e:
-        print("body2dscj(): failed to read %s - %s" % (dscname, str(e)))
+        print("body2dscj(): failed to read %s - %s" % (fn, str(e)))
         return
     if (len(L) == 0):
-        print("body2dscj(): empty " + fname)
+        print("body2dscj(): empty " + fn)
         return
 
     # ASCII descriptor => list of comment-pics rows
@@ -788,7 +790,7 @@ def notesProcs(IN):
     for el in IN:
         if (not el.__class__.__name__ == "list"):
             print("notesProcs(): Wrong note %s" % (el))
-            pprint.pprint(el_)
+            pprint.pprint(el)
             return ""
         if (len(el) != 2):
             print("notesProcs(): Wrong note %s" % (el))
@@ -936,11 +938,15 @@ def movePicasaIndex():
         return False
     pIndex = picasaDir + "/_" + getDescHead() + "/index.html"
     if (not os.path.exists(pIndex)):
-        print("movePicasaIndex(): can't find " + pIndex)
+        pIndex = picasaDir + "/" + getDescHead() + "/index.html"
+    if (not os.path.exists(pIndex)):
+        print("movePicasaIndex(): can't find proper directory under " + picasaDir)
         return False
     shutil.move(pIndex, ".")
-
     print("movePicasaIndex(): %s => ./index.html" % (pIndex))
+    rmd = pIndex.replace("/index.html", "/")
+    shutil.rmtree(rmd)
+    print("movePicasaIndex(): removed " + rmd)
 
     return True
 
@@ -987,14 +993,14 @@ def procPicasaIndex():
 
     return L
 
-# ----------------------------------------------------------------------------------------------------------------\
+# ----------------------------------------------------------------------------------------------------------------
 def runMkexif():
     cmd = "jhead -mkexif *.jpg"
     print("runMkexif(): " + cmd)
     os.system(cmd)
     return
 
-# ----------------------------------------------------------------------------------------------------------------\
+# ----------------------------------------------------------------------------------------------------------------
 # Rename files in List to: prefix.nnn[.date].ext
 # For prefix = "": replace non-alphanum characters by dots.
 def rename(addDate, prefix, List):
@@ -1122,7 +1128,6 @@ def procGroup(gr):
 # Initialize gpsDesc for procGroup()
 gpsDesc = {"empty": 1}
 
-
 def iniGpsDesc():
     global gpsDesc
     desc = getGpsDesc()
@@ -1149,7 +1154,8 @@ def getGpsTzDt(date, lat, lon):
     tzdt = 0
     try:
         tz_str = tf.timezone_at(lng=lon, lat=lat)
-        t = datetime(date[0], date[1], date[2], tzinfo=ZoneInfo(tz_str))
+        zi = ZoneInfo(tz_str)
+        t = datetime(date[0], date[1], date[2], tzinfo=zi)
         tzdt = int(str(t)[-6:-3])
     except Exception as e:
         print("Failed getGpsTzDt(): error=" + str(e))
@@ -1409,7 +1415,7 @@ def crGpsDescFromJpg(L, preview):
     nimg = 0
     for fn in L:
         if (not fn.endswith(".jpg") or fn.endswith("_t.jpg")): continue
-        [time, cl] = exifGet(fn)
+        [time, cl, comment] = exifGet(fn)
         cl = (cl.replace("*", "")).strip().lower()
         spinsJ = '{"tzdt": "*", "root": ["%s", "0,0", 0, "n"]}' % (time)
         if (not preview):
@@ -1492,6 +1498,7 @@ def gpsDesc2jpg():
     desc = getGpsDesc()
     if (desc == None): return
     if (not "tzdt" in desc or not "root" in desc):
+        fn = getDescHead() + ".gps.txt"
         print("gpsDesc2jpg(): wrong json in %s" % (fn, str(e)))
         return
 
@@ -1516,7 +1523,7 @@ def setTime(List):
         t = min(tc, ta)
         # print ("=>tc=%s ta=%s t=%s" % (tc, ta, t))
         t_ = str(exifGet(f)[0])
-        if (not t_): return
+        if (not t_): continue
         try:
             t_ = time.strptime(t_, "%Y-%m-%d %H:%M:%S")
             t_ = time.mktime(t_)
@@ -1528,11 +1535,12 @@ def setTime(List):
     return
 
 # --------------------------------------------------------------------------------------
-# Get DateTime*, camera, lens model from exif of the given file
+# Get DateTime*, camera, lens model, comment from exif of the given file
 # https://pypi.org/project/ExifRead/
-def exifGet(fn):
+def exifGet(fn, commentOn=False):
     t = ""
     cameraLens = ""
+    camera = ""
     f = None
     try:
         f = open(fn, "rb")  # we need to open and close this file explicitly
@@ -1543,12 +1551,14 @@ def exifGet(fn):
             t = str(tags['EXIF DateTimeDigitized'])
         if (not t):
             print("exifGet(): no DateTimeOriginal in " + fn)
-            return ["", ""]
+            return ["", "", ""]
 
         if (int(t[:2]) > 20 or int(t[:2]) < 19): t = ""
         if (not "-" in t): t = t.replace(":", "-", 2)
 
-        if ('Image Model' in tags):    cameraLens = str(tags['Image Model'])
+        if ('Image Model' in tags):
+            cameraLens = str(tags['Image Model'])
+            camera = cameraLens
         if ('EXIF LensModel' in tags):
             cameraLens += " " + str(tags['EXIF LensModel'])
         elif ('EXIF FocalLength' in tags):
@@ -1558,7 +1568,17 @@ def exifGet(fn):
     except Exception as e:
         print("exifGet() failed: " + fn + " " + str(e))
     if (not f == None): f.close()
-    return [t, cameraLens]
+    if (tsa):
+        t = useTsa(camera, t, fn)
+    if commentOn:
+        comment = ""
+        try:
+            img = Image.open(fn)
+            comment = img.app['COM'].decode("utf-8").strip()[:-1]
+        except Exception as e:
+            print("exifGet(): no comment in %s err=%s" % (fn, str(e)))
+        return [t, cameraLens, comment]
+    return [t, cameraLens, ""]
 
 # ----------------------------------------------------------------------------------------------------------
 # Get Picasa/IPTC caption, spec instr from the given file
@@ -1596,7 +1616,6 @@ def iptcGet(fn):
     spins = spins.strip()
     if (spins == ""): spins = " "
     spins = utf8(spins)
-    # print ("===>%s|%s" %(fn, capt))
     return [capt, spins]
 
 # ----------------------------------------------------------------------------------------------------------
@@ -1611,6 +1630,7 @@ def iptcSet(fn, capt, spins):
     now = now.strftime("%Y%m%d%H%M%S")
     info = None
     sys.stdout = open(os.devnull, 'w')  # disable print to block warning msgs
+    n = 0
     try:
         n = 1
         info = IPTCInfo(fn, force=True)
@@ -1630,6 +1650,7 @@ def iptcSet(fn, capt, spins):
             # info['copyright notice'] = ""
             # info['keywords']  = ""
         n = 3
+        time.sleep(0.25)
         info.save()
         if (os.path.isfile(fn + "~")): os.remove(fn + "~")
         sys.stdout = sys.__stdout__  # enable print
@@ -1710,21 +1731,21 @@ def cp2ftp():
 # Use given *.dscj.txt descriptor to copy images from ftp/<blog>/images/bak to the current dir for del = False
 # Delete these images for del = True
 def fromFtp(fn, delete):
-    print("fromFtp: delete=" + str(delete))
+    print("fromFtp(): delete=" + str(delete))
     source = getFtpBlogDir()
     if (source == ""):
-        print("fromFtp: can't get source dir")
+        print("fromFtp(): can't get source dir")
         return
     source = source + "/images/bak/"
     IN = jsonDscGet(fn)
     if (not IN):
-        print("fromFtp: wrong " + fn)
+        print("fromFtp(): wrong " + fn)
         return
     if (not "picDir" in IN):
-        print("fromFtp: \"picDir\" not found in %s - run picman -ju" % (fn))
+        print("fromFtp(): \"picDir\" not found in %s - run picman -ju" % (fn))
         return
     if (not IN["picDir"] in IN):
-        print("fromFtp: %s not found" % (IN["picDir"]))
+        print("fromFtp(): %s not found" % (IN["picDir"]))
         return
     IN = IN[IN["picDir"]]
     ljpg = []
@@ -1732,7 +1753,7 @@ def fromFtp(fn, delete):
         for item in el:
             if (not item.endswith(".jpg")): continue
             ljpg.append(item)
-    print("fromFtp: this desc has %d images, processing %s" % (len(ljpg), source))
+    print("fromFtp(): this desc has %d images, processing %s" % (len(ljpg), source))
 
     n = 0
     for el in ljpg:
@@ -1755,7 +1776,7 @@ def fromFtp(fn, delete):
         except:
             pass
 
-    print("fromFtp: images processed: %d" % n)
+    print("fromFtp(): images processed: %d" % n)
 
     return
 
@@ -1772,13 +1793,8 @@ def crCr2Desc():
     for fn in L:
         fn = fn.replace("\\", "/").lower()
         if ("/cr2/##" in fn): continue
-        dto = ""
-        try:
-            f = open(fn, 'rb')
-            tags = exifread.process_file(f)
-            f.close()
-            dto = str(tags['EXIF DateTimeOriginal'])
-        except Exception as e:
+        dto = exifGet(fn)[0]
+        if (not dto):
             print("crCr2Desc(): %s - can't get DateTimeOriginal err=%s" % (fn, str(e)))
             continue
 
@@ -1822,14 +1838,9 @@ def procCr2():
         if (os.path.exists("./cr2/" + jpg)):
             print("crCr2Desc(): %s is exact copy from cr2 - skip" % jpg)
             continue
-        dto = ""
-        try:
-            f = open(jpg, 'rb')
-            tags = exifread.process_file(f)
-            f.close()
-            dto = str(tags['EXIF DateTimeOriginal'])
-        except Exception as e:
-            print("crCr2Desc(): can't process %s - skip: %s" % (jpg, str(e)))
+        dto = exifGet(jpg)[0]
+        if (not dto):
+            print("crCr2Desc(): can't process - skip: " + jpg)
             continue
         if (dto in dtoUsed):
             print("crCr2Desc(): skip %s - its dto was already used in %s" % (jpg, dtoUsed[dto]))
@@ -1936,8 +1947,128 @@ def mvCr2F(x):  # check for commented jpg's and thumbs
     return True
 
 # ====================================================================================================
+# Get info from jpg's in ./tsa. Only those with EXIF Date Time Original and valid hh:mm:ss in Comment are used
+def procTsaJpgInfo():
+    res = {}
+    L = glob.glob("./tsa/*.jpg")
+    for fn in L:
+        fn = fn.replace("\\", "/")
+        [dto, camera, comment] = exifGet(fn, True)
+
+        if (not dto or not camera or not comment):
+            print("procTsaJpgInfo(): skip %s" % (fn))
+            continue
+        camera = camera.split(" ")[0]
+        if (len(camera) < 2):
+            print("procTsaJpgInfo(): skip %s - wrong camera %s" % (fn, camera))
+            continue
+        commDto = dto.split(" ")[0] + " " + comment
+        if (dto == commDto):
+            print("procTsaJpgInfo(): skip %s - wrong time in comment %s" % (fn, comment))
+            continue
+        dt = 0
+        try:
+            t1 = arrow.get(dto, 'YYYY-MM-DD HH:mm:ss')
+            t2 = arrow.get(commDto, 'YYYY-MM-DD HH:mm:ss')
+            dt = int((t2 - t1).total_seconds())
+        except Exception as e:
+            print("procTsaJpgInfo(): skip %s - not time in comment %s" % (fn, comment))
+            continue
+
+        fnShort = fn.split("/")[-1]
+        res[fnShort] = [camera, dto, commDto, dt]
+
+    return res
+
+# ====================================================================================================
+# Create descriptor *tsa.txt for files ./tsa/*.jpg
+def procTsa():
+    jpgInfo = procTsaJpgInfo()
+    if (not jpgInfo):
+        print("procTsa(): no tsa jpg's found")
+        return False
+
+    res = []
+    for fn in jpgInfo:
+        [camera, dto, commDto, dt] = jpgInfo[fn]
+        res.append([camera + " | " + dto, commDto, dt, fn])
+    res.sort()
+
+    dsc = []
+    for el in res:
+        [camera, dto] = el[0].split(" | ")
+        dsc.append([camera, dto] + el[1:])
+
+    jdsc = json.dumps(dsc, indent=1, sort_keys=True)
+    jfn = getDescHead() + ".tsa.txt"
+    if (os.path.isfile(fn)):
+        shutil.copy2(jfn, jfn + ".bak")
+    F = open(jfn, "w")
+    F.write(jdsc)
+    F.close()
+    print("procTsa(): created " + jfn)
+    return True
+
+# ====================================================================================================
+# Load *.tsa.txt to global variable tsa
+tsa = []
+def loadTsa():
+    global tsa
+    jfn = getDescHead() + ".tsa.txt"
+    if (not os.path.exists("./tsa") or not os.path.exists(jfn)):
+        print("loadTsa(): no tsa data")
+        return False
+
+    try:
+        f = open(jfn, "r")
+        tsa = f.read()
+        f.close()
+        tsa = json.loads(tsa)
+    except Exception as e:
+        print("loadTsa(): failed to get json from %s - %s" % (jfn, str(e)))
+        tsa = {}
+
+    if (not tsa):
+        print("loadTsa(): tsa disabled - no items to use " + jfn)
+        return False
+    tsa.reverse()
+    print("loadTsa(): tsa enabled - using %s, %d items" % (jfn, len(tsa)))
+
+    return True
+
+# ====================================================================================================
+# Adjust date according to tsa. Called from exifGet(...)
+def useTsa(camera, date, fn):
+    if (not camera or not date):
+        print("useTsa(): wrong parameters")
+        return date
+    if (not tsa):
+        return date
+    try:
+        t = arrow.get(date, 'YYYY-MM-DD HH:mm:ss')
+    except Exception as e:
+        print("useTsa(): wrong date " + str(e))
+        return date
+
+    item2use = ""
+    for el in tsa:
+        if (camera.lower() != el[0].lower()): continue
+        if (el[1] > date): continue
+        item2use = el
+        break
+    if (not item2use):
+        return date
+
+    tr = t.shift(seconds=-1 * item2use[3])
+    dater = tr.format('YYYY-MM-DD HH:mm:ss')
+    if (fn):
+        print("useTsa(): %s=>%s in %s using %s" % (date, dater, fn, item2use[-1]))
+
+    return dater
+
+# ====================================================================================================
 if (pyImport == ""):
-    print("picman: start version: %s Python: %s" % (version, pyVer))
+    print("picman: start version: %s with Python: %s at: %s" % (version, pyVer, os.getcwd().replace("\\", "/")))
 else:
     print("picman: can't start %s %s" % (pyVer, pyImport))
     exit(-1)
@@ -1980,6 +2111,7 @@ group.add_argument('-gpsg', action="store_true", help="Create descriptors *.gps.
 group.add_argument('-gpsgh', action="store_true", help="Create descriptor gps.htm from *.jpg")
 group.add_argument('-cr2', action="store_true", help="Rename images in ./cr2 if necessary")
 group.add_argument('-mvcr2', action="store_true", help="./cr2/*.jpg => ./*.jpg")
+group.add_argument('-tsa', action="store_true", help="Create descriptor *.tsa.txt from ./tsa/*.jpg")
 
 parser.add_argument('-ex', action="store_true", help="Run mkexif for -mvc")
 parser.add_argument('-pi', action="store_true", help="Use Picasa-generated index")
@@ -1987,12 +2119,12 @@ parser.add_argument('-pv', action="store_true", help="Preview version of *.gps.t
 parser.add_argument("-tbg", type=str, help="Background color code for thumbs. Default is #c0c0c0")
 
 args = vars(parser.parse_args())
-
 desc = setDesc()
 print("picman: using " + desc)
 
 desc = desc.replace(".dscj.txt", "")
 
+loadTsa()
 toSetTime = args["T"]
 Rename = args["mv"] or args["mvd"] or args["mvc"]
 addDate = args["mvd"]
@@ -2117,13 +2249,18 @@ if (args["mvcr2"]):
     exit(0)
 # ----------------------------------------------------------------------------------------------------------
 if (args["mvt"]):
-    lTh = glob.glob("*__t.jpg")
+    lTh = glob.glob("*_t.jpg")
     for fn in lTh: os.remove(fn)
 
     cmd = "jhead -n%Y.%m.%d.%H%M%S.%03i *.jpg"
     print("picman: " + cmd)
     os.system(cmd)
     rmGpsDesc()
+    print("picman: stop")
+    exit(0)
+# ----------------------------------------------------------------------------------------------------------
+if (args["tsa"]):
+    procTsa()
     print("picman: stop")
     exit(0)
 # ----------------------------------------------------------------------------------------------------------
