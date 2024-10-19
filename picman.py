@@ -94,7 +94,8 @@ version = "07/23/2024"  # enable -gpsgh
                         # enable getDescHead()
                         # enable runMkexif() to create exif for -mvc
                         # enable makeDatesCPU() for tag datesCPU in *.dscj.txt
-version = "09/12/2024"  # enable -tsa
+version = "09/12/2024"  # enable -tsa, *.tsa.txt descriptor
+version = "10/17/2024"  # fix minor tsa bug
 # ----------------------------------------------------------------------------------------------------------
 import sys
 import os, platform, glob, json, copy, re, uuid
@@ -2001,7 +2002,7 @@ def procTsa():
 
     jdsc = json.dumps(dsc, indent=1, sort_keys=True)
     jfn = getDescHead() + ".tsa.txt"
-    if (os.path.isfile(fn)):
+    if (os.path.isfile(jfn)):
         shutil.copy2(jfn, jfn + ".bak")
     F = open(jfn, "w")
     F.write(jdsc)
@@ -2012,11 +2013,14 @@ def procTsa():
 # ====================================================================================================
 # Load *.tsa.txt to global variable tsa
 tsa = []
-def loadTsa():
+def loadTsa(atsa):
     global tsa
     jfn = getDescHead() + ".tsa.txt"
     if (not os.path.exists("./tsa") or not os.path.exists(jfn)):
         print("loadTsa(): no tsa data")
+        return False
+    if (atsa):
+        print("loadTsa(): ignore the old descriptor: " + jfn)
         return False
 
     try:
@@ -2124,7 +2128,7 @@ print("picman: using " + desc)
 
 desc = desc.replace(".dscj.txt", "")
 
-loadTsa()
+loadTsa(args["tsa"])
 toSetTime = args["T"]
 Rename = args["mv"] or args["mvd"] or args["mvc"]
 addDate = args["mvd"]
