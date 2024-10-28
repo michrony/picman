@@ -95,7 +95,7 @@ version = "07/23/2024"  # enable -gpsgh
                         # enable runMkexif() to create exif for -mvc
                         # enable makeDatesCPU() for tag datesCPU in *.dscj.txt
 version = "09/12/2024"  # enable -tsa, *.tsa.txt descriptor
-version = "10/17/2024"  # fix minor tsa bug
+version = "10/26/2024"  # fix tsa bugs, -ccr2 bug
 # ----------------------------------------------------------------------------------------------------------
 import sys
 import os, platform, glob, json, copy, re, uuid
@@ -1560,6 +1560,7 @@ def exifGet(fn, commentOn=False):
         if ('Image Model' in tags):
             cameraLens = str(tags['Image Model'])
             camera = cameraLens
+
         if ('EXIF LensModel' in tags):
             cameraLens += " " + str(tags['EXIF LensModel'])
         elif ('EXIF FocalLength' in tags):
@@ -1792,7 +1793,7 @@ def crCr2Desc():
     desc = {}
     ncr2 = 0
     for fn in L:
-        fn = fn.replace("\\", "/").lower()
+        fn = fn.replace("\\", "/")  #.lower()
         if ("/cr2/##" in fn): continue
         dto = exifGet(fn)[0]
         if (not dto):
@@ -1860,7 +1861,7 @@ def procCr2():
         # print (jpgPrefix + " - " + tmp)
         L = glob.glob(cr2[0:-4] + "*")
         for src in L:
-            src = src.replace("\\", "/").lower()
+            src = src.replace("\\", "/")   #.lower()
             dst = src.replace(tmp, jpgPrefix)
             if (src == dst): continue
             dst = dst.replace("cr2/", "cr2/" + uid)
@@ -2063,7 +2064,7 @@ def useTsa(camera, date, fn):
     if (not item2use):
         return date
 
-    tr = t.shift(seconds=-1 * item2use[3])
+    tr = t.shift(seconds=1 * item2use[3])
     dater = tr.format('YYYY-MM-DD HH:mm:ss')
     if (fn):
         print("useTsa(): %s=>%s in %s using %s" % (date, dater, fn, item2use[-1]))
