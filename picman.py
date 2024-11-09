@@ -95,7 +95,9 @@ version = "07/23/2024"  # enable -gpsgh
                         # enable runMkexif() to create exif for -mvc
                         # enable makeDatesCPU() for tag datesCPU in *.dscj.txt
 version = "09/12/2024"  # enable -tsa, *.tsa.txt descriptor
-version = "10/26/2024"  # fix tsa bugs, -ccr2 bug
+version = "10/26/2024"  # fix tsa bugs, -cr2 bug
+version = "11/01/2024"  # enable -mvtsa
+version = "11/04/2024"  # modify loadTsa(), disable -tsa, now descriptor *.tsa.txt is not used
 # ----------------------------------------------------------------------------------------------------------
 import sys
 import os, platform, glob, json, copy, re, uuid
@@ -115,21 +117,13 @@ import arrow
 
 pyVer = platform.python_version()
 pyImport = ""
-if pyVer[0] <= "2":
-    try:
-        #from iptcinfo import IPTCInfo
-        from PIL import Image
-        import validators
-    except Exception as e:
-        pyImport = str(e)
-else:
-    try:
+
+try:
         from iptcinfo3 import IPTCInfo
         from PIL import Image
         import validators
-    except Exception as e:
+except Exception as e:
         pyImport = str(e)
-
 
 # How To Install Python 3.9 on Ubuntu 20.04|18.04:
 # https://linuxize.com/post/how-to-install-python-3-9-on-ubuntu-20-04/
@@ -1015,9 +1009,9 @@ def rename(addDate, prefix, List):
     if (len(List) == 0):
         print("rename(): nothing to process")
         return 0
-
     # Prepare new names
-    print("rename(): %d items to process" % (len(List)))
+    prin
+t("rename(): %d items to process" % (len(List)))
     InPlace = False
     uid = str(uuid.uuid4()).split("-")[0] + "."
     N = 0
@@ -1500,7 +1494,7 @@ def gpsDesc2jpg():
     if (desc == None): return
     if (not "tzdt" in desc or not "root" in desc):
         fn = getDescHead() + ".gps.txt"
-        print("gpsDesc2jpg(): wrong json in %s" % (fn, str(e)))
+        print("gpsDesc2jpg(): wrong json in %s" % (fn))
         return
 
     (dst, root) = (desc["tzdt"], desc["root"])
@@ -1983,64 +1977,44 @@ def procTsaJpgInfo():
     return res
 
 # ====================================================================================================
-# Create descriptor *tsa.txt for files ./tsa/*.jpg
-def procTsa():
-    jpgInfo = procTsaJpgInfo()
-    if (not jpgInfo):
-        print("procTsa(): no tsa jpg's found")
-        return False
-
-    res = []
-    for fn in jpgInfo:
-        [camera, dto, commDto, dt] = jpgInfo[fn]
-        res.append([camera + " | " + dto, commDto, dt, fn])
-    res.sort()
-
-    dsc = []
-    for el in res:
-        [camera, dto] = el[0].split(" | ")
-        dsc.append([camera, dto] + el[1:])
-
-    jdsc = json.dumps(dsc, indent=1, sort_keys=True)
-    jfn = getDescHead() + ".tsa.txt"
-    if (os.path.isfile(jfn)):
-        shutil.copy2(jfn, jfn + ".bak")
-    F = open(jfn, "w")
-    F.write(jdsc)
-    F.close()
-    print("procTsa(): created " + jfn)
-    return True
-
-# ====================================================================================================
-# Load *.tsa.txt to global variable tsa
+# Load global variable tsa
 tsa = []
 def loadTsa(atsa):
-    global tsa
-    jfn = getDescHead() + ".tsa.txt"
-    if (not os.path.exists("./tsa") or not os.path.exists(jfn)):
-        print("loadTsa(): no tsa data")
-        return False
-    if (atsa):
-        print("loadTsa(): ignore the old descriptor: " + jfn)
-        return False
+ global tsa
+ if (atsa):
+     print("loadTsa(): ignore ")
+     return False
 
-    try:
-        f = open(jfn, "r")
-        tsa = f.read()
-        f.close()
-        tsa = json.loads(tsa)
-    except Exception as e:
-        print("loadTsa(): failed to get json from %s - %s" % (jfn, str(e)))
-        tsa = {}
+ ltsa = glob.glob("./tsa/tsa*.jpg")
+ if (not ltsa):
+       print("loadTsa(): tsa disabled - no items to use ")
+       return False
 
-    if (not tsa):
-        print("loadTsa(): tsa disabled - no items to use " + jfn)
-        return False
-    tsa.reverse()
-    print("loadTsa(): tsa enabled - using %s, %d items" % (jfn, len(tsa)))
+ for item in ltsa:
+     fn = item.replace("\\", "/").replace("./tsa/", "")
+     item = fn.replace("tsa.", "").replace(".jpg", "")
+     item = item.split(".")
+     if (not "-" in item[-1]):
+         continue
+     camera = item[0]
+     ymd = item[1]+item[2]+item[3]
+     hms = item[-1].split("-")
+     dto = ymd + hms[0]
+     dto = arrow.get(dto, 'YYYYMMDDHHmmss')
+     actualt  = ymd + hms[1]
+     actualt = arrow.get(actualt, 'YYYYMMDDHHmmss')
+     dt = (actualt-dto).seconds
+     dto = dto.format('YYYY-MM-DD HH:mm:ss')
+     actualt = actualt.format('YYYY-MM-DD HH:mm:ss')
+     tsa.append([camera, dto, actualt, dt, fn])
+     pass
 
-    return True
+ tsa.sort()
+ #pprint.pprint(tsa)
+ tsa.reverse()
+ print("loadTsa(): tsa enabled - %d items" % (len(tsa)))
 
+ return True
 # ====================================================================================================
 # Adjust date according to tsa. Called from exifGet(...)
 def useTsa(camera, date, fn):
@@ -2070,7 +2044,42 @@ def useTsa(camera, date, fn):
         print("useTsa(): %s=>%s in %s using %s" % (date, dater, fn, item2use[-1]))
 
     return dater
+# ====================================================================================================
+# rename images in ./tsa: camera.dto[-time from comment]
+def mvTsa(fn):
+ global tsa
+ if (not fn.lower().endswith("jpg") or fn.lower().endswith("_t.jpg")):
+     print("mvTsa(): skip " + fn)
+     return -1
+ fn = fn.replace("\\", "/")
+ print("mvTsa(): set tsa off")
+ tsa = ""
 
+ [dto, tmp, comment] = exifGet(fn, commentOn=1)
+ if (not dto):
+     print("mvTsa(): skip " + fn)
+     return -1
+ camera = tmp.split(" ")[0]
+
+ tactual = ""
+ if (comment):
+     tactual = comment
+ if (tactual and tactual.count(":")==2):
+     try:
+         arrow.get(tactual, "HH:mm:ss")
+     except Exception:
+         tactual = ""
+ if (tactual):
+     tactual = "-" + tactual.replace(":", "")
+
+ fnNew = "./tsa/tsa." + camera + "." + dto.replace("-", ".").replace(" ", ".").replace(":", "") + tactual + ".jpg"
+ if (os.path.exists(fnNew)):
+     print("mvTsa(): %s already exists" % fnNew)
+     return 0
+ print("mvTsa(): %s===>%s" % (fn, fnNew))
+ os.rename(fn, fnNew)
+
+ return 1
 # ====================================================================================================
 if (pyImport == ""):
     print("picman: start version: %s with Python: %s at: %s" % (version, pyVer, os.getcwd().replace("\\", "/")))
@@ -2116,7 +2125,7 @@ group.add_argument('-gpsg', action="store_true", help="Create descriptors *.gps.
 group.add_argument('-gpsgh', action="store_true", help="Create descriptor gps.htm from *.jpg")
 group.add_argument('-cr2', action="store_true", help="Rename images in ./cr2 if necessary")
 group.add_argument('-mvcr2', action="store_true", help="./cr2/*.jpg => ./*.jpg")
-group.add_argument('-tsa', action="store_true", help="Create descriptor *.tsa.txt from ./tsa/*.jpg")
+group.add_argument('-mvtsa', action="store_true", help="Rename *.jpg in ./tsa")
 
 parser.add_argument('-ex', action="store_true", help="Run mkexif for -mvc")
 parser.add_argument('-pi', action="store_true", help="Use Picasa-generated index")
@@ -2129,7 +2138,8 @@ print("picman: using " + desc)
 
 desc = desc.replace(".dscj.txt", "")
 
-loadTsa(args["tsa"])
+loadTsa(args["mvtsa"])
+
 toSetTime = args["T"]
 Rename = args["mv"] or args["mvd"] or args["mvc"]
 addDate = args["mvd"]
@@ -2264,9 +2274,13 @@ if (args["mvt"]):
     print("picman: stop")
     exit(0)
 # ----------------------------------------------------------------------------------------------------------
-if (args["tsa"]):
-    procTsa()
-    print("picman: stop")
+if (args["mvtsa"]):
+    ltsa = glob.glob("./tsa/*jpg")
+    nr = 0
+    for fn in ltsa:
+        if (mvTsa(fn)>0):
+            nr = nr + 1
+    print("picman: processed %d renamed %d items - stop" % (len(ltsa), nr))
     exit(0)
 # ----------------------------------------------------------------------------------------------------------
 if (Rename):
