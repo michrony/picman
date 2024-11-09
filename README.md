@@ -2,9 +2,8 @@ OS:             Win10
 <br>
 Utilities used: http://www.sentex.net/~mwandel/jhead/
 <pre>
-picman: start version: 09/12/2024 with Python: 3.11.5 at: j:/jblog/run
 usage: picman.py [-h]
-                 (-mv | -mvc | -mvt | -mvd | -T | -tS | -ts TS | -jn | -jnb | -ju | -jue | -jun | -jp | -2ftp | -ftp2 | -ftpd | -gpsn | -gpsu | -gpsg | -gpsgh | -cr2 | -mvcr2 | -tsa)
+                 (-mv | -mvc | -mvt | -mvd | -T | -tS | -ts TS | -jn | -jnb | -ju | -jue | -jun | -jp | -2ftp | -ftp2 | -ftpd | -gpsn | -gpsu | -gpsg | -gpsgh | -cr2 | -mvcr2 | -mvtsa)
                  [-ex] [-pi] [-pv] [-tbg TBG]
 
 Notes: (1) *.dscj.txt should be always present in curr dir. It is used for jpg
@@ -37,7 +36,7 @@ options:
   -gpsgh      Create descriptor gps.htm from *.jpg
   -cr2        Rename images in ./cr2 if necessary
   -mvcr2      ./cr2/*.jpg => ./*.jpg
-  -tsa        Create descriptor *.tsa.txt from ./tsa/*.jpg
+  -mvtsa      Rename *.jpg in ./tsa
   -ex         Run mkexif for -mvc
   -pi         Use Picasa-generated index
   -pv         Preview version of *.gps.txt, iptcs not used
