@@ -98,6 +98,7 @@ version = "09/12/2024"  # enable -tsa, *.tsa.txt descriptor
 version = "10/26/2024"  # fix tsa bugs, -cr2 bug
 version = "11/01/2024"  # enable -mvtsa
 version = "11/04/2024"  # modify loadTsa(), disable -tsa, now descriptor *.tsa.txt is not used
+version = "11/18/2024"  # fix loadTsa()
 # ----------------------------------------------------------------------------------------------------------
 import sys
 import os, platform, glob, json, copy, re, uuid
@@ -1010,8 +1011,7 @@ def rename(addDate, prefix, List):
         print("rename(): nothing to process")
         return 0
     # Prepare new names
-    prin
-t("rename(): %d items to process" % (len(List)))
+    print("rename(): %d items to process" % (len(List)))
     InPlace = False
     uid = str(uuid.uuid4()).split("-")[0] + "."
     N = 0
@@ -1999,13 +1999,18 @@ def loadTsa(atsa):
      camera = item[0]
      ymd = item[1]+item[2]+item[3]
      hms = item[-1].split("-")
-     dto = ymd + hms[0]
-     dto = arrow.get(dto, 'YYYYMMDDHHmmss')
+     dto  = ymd + hms[0]
+     dtoa = arrow.get(dto, 'YYYYMMDDHHmmss')
      actualt  = ymd + hms[1]
-     actualt = arrow.get(actualt, 'YYYYMMDDHHmmss')
-     dt = (actualt-dto).seconds
-     dto = dto.format('YYYY-MM-DD HH:mm:ss')
-     actualt = actualt.format('YYYY-MM-DD HH:mm:ss')
+     actualta = arrow.get(actualt, 'YYYYMMDDHHmmss')
+     dt = 0
+     if (actualt>dto):
+         dt = (actualta-dtoa).seconds
+     else:
+         dt = (dtoa - actualta).seconds
+         dt = -1*dt
+     dto = dtoa.format('YYYY-MM-DD HH:mm:ss')
+     actualt = actualta.format('YYYY-MM-DD HH:mm:ss')
      tsa.append([camera, dto, actualt, dt, fn])
      pass
 
