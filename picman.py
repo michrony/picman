@@ -99,6 +99,7 @@ version = "10/26/2024"  # fix tsa bugs, -cr2 bug
 version = "11/01/2024"  # enable -mvtsa
 version = "11/04/2024"  # modify loadTsa(), disable -tsa, now descriptor *.tsa.txt is not used
 version = "11/18/2024"  # fix loadTsa()
+version = "12/03/2024"  # enable *.tsa.zip
 # ----------------------------------------------------------------------------------------------------------
 import sys
 import os, platform, glob, json, copy, re, uuid
@@ -1692,7 +1693,6 @@ def getFtpBlogDir():
     for el in ftpSubdirs:
         el = el.replace("\\", "/").split("/")[-2]
         blogs.add(el)
-    # print (blogs)
 
     blogs = blogs.intersection(curr)
     if (len(blogs) > 0):
@@ -1720,6 +1720,10 @@ def cp2ftp():
     for fn in ljpg:
         shutil.copy2(fn, dest)
     print("cp2ftp: %d images copied to %s" % (len(ljpg), dest))
+    tsaZip = getDescHead() + ".tsa.zip"
+    if (os.path.exists(tsaZip)):
+        shutil.copy2(tsaZip, dest)
+        print("cp2ftp: %s ===> %s" % (tsaZip, dest))
 
     return
 
@@ -1771,6 +1775,13 @@ def fromFtp(fn, delete):
                 n += 1
         except:
             pass
+    tsaZip = getDescHead() + ".tsa.zip"
+    if (os.path.exists(source + tsaZip) and not delete):
+        shutil.copy2(source + tsaZip, tsaZip)
+        print("fromFtp(): got " + tsaZip)
+    if (os.path.exists(source + tsaZip) and delete):
+        os.unlink(source + tsaZip)
+        print("fromFtp(): removed " + source + tsaZip)
 
     print("fromFtp(): images processed: %d" % n)
 
@@ -2282,10 +2293,19 @@ if (args["mvt"]):
 if (args["mvtsa"]):
     ltsa = glob.glob("./tsa/*jpg")
     nr = 0
+    empty = True
     for fn in ltsa:
-        if (mvTsa(fn)>0):
+        rc = mvTsa(fn)
+        if (rc>=0):
+            empty = False
+        if (rc>0):
             nr = nr + 1
-    print("picman: processed %d renamed %d items - stop" % (len(ltsa), nr))
+    if (not empty):
+        shutil.make_archive(getDescHead() + '.tsa', format='zip',
+                            root_dir='.', base_dir='./tsa')
+        print("picman: created " + getDescHead() + '.tsa.zip')
+
+    print("picman: processed %d renamed %d tsa items - stop" % (len(ltsa), nr))
     exit(0)
 # ----------------------------------------------------------------------------------------------------------
 if (Rename):
