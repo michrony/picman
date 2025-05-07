@@ -181,11 +181,11 @@ def getModDate(fn):
 
 # ----------------------------------------------------------------------------------------------------------
 def getMaxModDate():
-    res = "2000-01-01"
+    res = "1970-01-01"
     l = glob.glob("*.jpg")
     gotit = False
     for el in l:
-        if ("_t.jpg" in el): continue
+        if ("_t.jpg" in el or "dummy" in el): continue
         t = getModDate(el)
         if t > res:
             gotit = True
