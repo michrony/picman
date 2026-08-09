@@ -3,7 +3,7 @@ OS:             Win11
 Utilities used: http://www.sentex.net/~mwandel/jhead/
 <pre>
 picman -h
-picman: start version: 08/09/2026 with Python: 3.14.5 at: g:/wbmov/_ampsycho.00
+picman: start version: 08/09/2026 with Python: 3.14.5
 usage: picman.py [-h] (-mv | -mvc | -mvt | -mvd | -T | -tS | -ts TS | -jn | -jnb | -ju | -jue | -jun | -jp | -2ftp |
                  -ftp2 | -ftpd | -db | -gpsn | -gpsu | -gpsg | -gpsgh | -cr2 | -mvcr2 | -mvtsa) [-ex] [-pi] [-pv]
                  [-tbg TBG]
