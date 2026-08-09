@@ -9,11 +9,10 @@ usage: picman.py [-h]
 Notes: (1) *.dscj.txt should be always present in curr dir. It is used for jpg
 renaming and keeps JSON descriptor. If IPTC is empty, jpg comment is used.
 
-options:
+options:  
   -h, --help  show this help message and exit
   -mv         Rename *.jpg files to prefix.nnn.ext
-  -mvc        Rename *.jpg files to lower case, replace non-alphanum
-              characters by dots
+  -mvc        Rename *.jpg files to lower case, replace non-alphanum characters by dots
   -mvt        Rename *.jpg files to yyyy.mm.dd.hhmmss.jpg
   -mvd        Rename *.jpg files to prefix.nnn.date.ext
   -T          Set file mod time from its EXIF info or creation time if no EXIF
@@ -28,10 +27,9 @@ options:
   -2ftp       Copy *.jpg images to proper ftp subdirectory
   -ftp2       Copy *.jpg images from proper ftp subdirectory
   -ftpd       Delete *.jpg images from proper ftp subdirectory
-  -gpsn       Create new descriptors *.gps.txt *.gps.htm from Android *.csv
-              files
-  -gpsu       Update descriptors *.gps.txt, *.gps.htm, put *.gps.txt info to
-              image files
+  -db         Work with MySql using *.db.txt
+  -gpsn       Create new descriptors *.gps.txt *.gps.htm from Android *.csv files
+  -gpsu       Update descriptors *.gps.txt, *.gps.htm, put *.gps.txt info to image files
   -gpsg       Create descriptors *.gps.txt, *.gps.htm from *.jpg
   -gpsgh      Create descriptor gps.htm from *.jpg
   -cr2        Rename images in ./cr2 if necessary
