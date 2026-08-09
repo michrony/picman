@@ -1,10 +1,10 @@
-#!/usr/bin/python3.11
 # picman.py
 
 # Picture Manager: process image descriptors, rename, create thumbs
 
 # Utilies used: jhead
 # Env vars used: picman.picasa - Picasa export directory
+#                pydbtest - blog if current dir does not specify it
 
 # Version 07/18/2011
 # Version 08/02/2011: introduced thumb control
@@ -100,9 +100,13 @@ version = "11/01/2024"  # enable -mvtsa
 version = "11/04/2024"  # modify loadTsa(), disable -tsa, now descriptor *.tsa.txt is not used
 version = "11/18/2024"  # fix loadTsa()
 version = "12/03/2024"  # enable *.tsa.zip
+version = "01/25/2026"  # enable MySQL processing instead of MS-Access
+version = "02/20/2026"  # fix *.text.txt
+version = "08/09/2026"  # fix date in *.db.txt for *.dscj.txt
 # ----------------------------------------------------------------------------------------------------------
 import sys
 import os, platform, glob, json, copy, re, uuid
+import json
 import shutil
 import argparse
 import time
@@ -113,9 +117,13 @@ from zoneinfo import ZoneInfo
 from builtins import str
 import pprint
 import csv
-#import base64
 import exifread
 import arrow
+
+from pathlib import Path
+from dateutil.parser import parse
+from enum import global_enum, Enum
+from mysql.connector import connect, Error
 
 pyVer = platform.python_version()
 pyImport = ""
@@ -131,21 +139,14 @@ except Exception as e:
 # https://linuxize.com/post/how-to-install-python-3-9-on-ubuntu-20-04/
 # When both 3.8 and 3.9 are installed, for 3.9 installation use python3.9 -m pip install x
 
-# For python3:
 # pip install iptcinfo3
 # pip install validators
 # pip install pillow
 # pip install tzdata
 # pip install tzwhere
 # pip install ExifRead
-
-# For CentOS Python 2.7:
-# yum -y install python-pip  - if necessary
-# yum install jhead
-# pip install future
-# pip install Pillow
-# pip install iptcinfo
-# pip install validators
+# pip install json
+# pip install mysql-connector-python
 
 # ----------------------------------------------------------------------------------------------------------
 # All symbols after x'80' => HTML encoding $#xxx;
@@ -930,14 +931,15 @@ def movePicasaIndex():
     if (os.path.exists(pIndex)): return True  # already in place
 
     picasaDir = os.getenv("picman.picasa", None)
+    picasaDir = os.getenv("picman.picasa", None)
     if (not picasaDir):
-        print("movePicasaIndex(): picman.picasa not set")
+        print("movePicasaIndex(): env var picman.picasa is not set")
         return False
     pIndex = picasaDir + "/_" + getDescHead() + "/index.html"
     if (not os.path.exists(pIndex)):
         pIndex = picasaDir + "/" + getDescHead() + "/index.html"
     if (not os.path.exists(pIndex)):
-        print("movePicasaIndex(): can't find proper directory under " + picasaDir)
+        print("movePicasaIndex(): can't find " + pIndex)
         return False
     shutil.move(pIndex, ".")
     print("movePicasaIndex(): %s => ./index.html" % (pIndex))
@@ -1788,6 +1790,398 @@ def fromFtp(fn, delete):
     return
 
 # --------------------------------------------------------------------------------------
+# Use env var pydbtest if current dir is not blog-related
+def getBlog():
+    global blog
+    if (blog): return blog
+    blog = os.getcwd().replace("\\", "/").replace("_", "")
+    res = blog.split("/")[-2]
+    if (res!="run"):
+       return res
+    res = os.environ.get("pydbtest", "")
+    if (not res):
+        print("getBlog(): env var pydbtest is not set")
+        return None
+    return res
+
+# ----------------------------------------------------------------------------------------------------
+def getCfgDb():
+    scriptdir = os.path.dirname(os.path.realpath(__file__))
+    fn = scriptdir.replace("\\", "/") + "/picman.properties.json"
+    if (not Path(fn).exists()):
+        print("getCfg(): {} does not exist".format(fn))
+        return None
+    cfg = ""
+    try:
+        cfg = json.loads(open(fn).read())
+    except Exception as e:
+        print("getCfgDb(): wrong json in " + fn)
+        return None
+    print("getCfg(): using " + fn)
+
+    # print (cfg)
+    if ("MySQLUser" not in cfg or "MySQLPass" not in cfg or "MySQLUrl" not in cfg):
+        print("getCfg(): not all DB parameters are in " + fn)
+        return None
+    hostPortDb = cfg["MySQLUrl"].replace("jdbc:mysql://", "").replace(":", "|").replace("/", "|").replace("?", "|").split("|")
+    if (len(hostPortDb) != 4):
+        print("getCfg(): wrong  MySQLUrl " + cfg["MySQLUrl"])
+        return None
+    res = (cfg["MySQLUser"], cfg["MySQLPass"], hostPortDb[0], hostPortDb[1], hostPortDb[2])
+    return res
+
+# ----------------------------------------------------------------------------------------------------
+blog  = None
+dbCfg = None
+def procDescDb():
+    global blog
+    global dbCfg
+
+    blog = getBlog()
+    dbCfg = getCfgDb()
+    if (not blog or not dbCfg):
+        print("procDescDb(): blog, cfg not set - return")
+        return
+
+    print("procDescDb: blog=" + blog)
+    fn = getDescHead() + ".db.txt"
+    if (not os.path.isfile(fn)):
+        crDescDb(fn)
+        #print("procDescDb: stop")
+        #return
+
+    desc = verDescDB()
+    if (not desc):
+        print("procDescDb: stop")
+        return
+    if (desc["act"]=="verify"):
+       putDescDb(fn, desc)
+       print("procDescDb: stop")
+       return
+
+    abstract = getDescDb(desc["useDesc"])
+    qdel = "delete from siteprod.load where abstractraw like '%" + getDescHead() + "%' or blog=? and cat=? and title=? and 1=1"
+    vdel = [blog, desc["cat"], desc["title"]]
+    qins = "insert into siteprod.load(blog, cat, title, abstractraw, url) values(?, ?, ?, ?, ?)"
+    vins = [blog, desc["cat"], desc["title"], abstract, desc["url"]]
+    qupd = "update siteprod.properties_catinfo set upd='Y' where blog=? and cat=?"
+    vupd = [blog, desc["cat"]]
+
+    if (desc["date"]):
+       qdel = qdel.replace("1=1", "date=?")
+       vdel.append(desc["date"])
+       qins = qins.replace("url)", "url, date)")
+       qins = qins.replace("?)", "?, ?)")
+       vins.append(desc["date"])
+
+    if (desc["act"]=="put"):
+       dbRun(DbOp.PUT, [[qdel, vdel, "delete"], [qins, vins, "insert"], [qupd, vupd, "update"]])
+       putDescDb(fn, desc)
+       print("procDescDb: stop")
+       return
+
+    if (desc["act"]=="del"):
+       dbRun(DbOp.DEL, [[qdel, vdel, "delete"], [qupd, vupd, "update"]])
+       putDescDb(fn, desc)
+       print("procDescDb: stop")
+       return
+
+    return
+# ----------------------------------------------------------------------------------------------------
+def crDescDb(fn):
+    actlist = [["del", ""], ["put", ""], ["verify", "*"]]
+    created = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+
+    useDesc = ""
+    dh = getDescHead()
+    for p in [dh + ".info.txt", getDescHead() + ".dscj.txt"]:
+        if (Path(p).exists() and os.path.getsize(p)>4):
+           useDesc = p
+           break
+
+    qv = []
+    qv.append(["""
+       select cat, upd from properties_catinfo 
+              where lower(active)='y' and blog=%s
+              order by cat asc
+     """, blog])
+
+    catlist = dbRun(DbOp.GETCATS, qv)
+    if (not catlist):
+        print("crDescDb(): empty catlist - stop")
+        if (Path(fn).exists()):
+           Path(fn).remove
+        return
+
+    cat = ""
+
+    if ("sys.ann" in fn or not useDesc):
+        useDesc = dh + ".text.txt"
+        if (not os.path.isfile(useDesc)):
+           Path(useDesc).write_text("<!-" + created[0:10] + " My Title ->\n<!- " + dh + " ->\n")
+           print("crDescDb(): created " + useDesc)
+    if ("sys.ann" in fn):
+        for i in range(len(catlist)):
+            if ("sys.ann" in catlist[i][0]):
+                catlist[i][1] = "*"
+                cat = catlist[i][0].replace("=>", "")
+
+    out = {"act": "verify", "actlist": actlist, "cat": cat, "catlist": catlist, "created": created,
+           "date": "", "title": "", "url": "", "useDesc": useDesc}
+    putDescDb(fn, out)
+
+    return
+
+# ----------------------------------------------------------------------------------------------------
+def verUseDesc(IN):
+    fn = IN["useDesc"]
+    desc = getDescDb(fn)
+    if (not isinstance(desc, str)):
+        IN["useDesc"] = ""
+        IN["date"]    = ""
+        IN["title"]   = ""
+        return IN
+
+    if (".text" in fn):
+        tmp = utf8(desc)
+        if (tmp!=desc):
+            desc = tmp
+            Path(fn).write_text(desc)
+            IN["date"] = ""
+            print("verUseDesc(): wrote " + fn)
+
+    abstractHead = ""
+    url   = ""
+    date  = ""
+    title = ""
+    if (".text" in fn):
+        IN["date"] = IN["created"]
+    if (".info" in fn or ".text" in fn and desc.startswith("<!-")):
+        abstractHead = desc.split("->")[0]
+        abstractHead = abstractHead.replace("<!-", "")
+        if ("www" in abstractHead):
+            url = "https://www" + abstractHead.split("www")[1]
+            abstractHead = abstractHead.split(" www")[0]
+        [date, title] = abstractHead.split(" ", maxsplit=1)
+        title = title.strip()
+    if ("<!--dscj" in desc):
+        d = desc.replace("<!--dscj", "")
+        d = d.split("-->")[0]
+        try: d = json.loads(d)
+        except:
+            d = ""
+        if (d and "datesCPU" in d and len(d["datesCPU"])==3):
+            date = d["datesCPU"][0]
+            print("verUseDesc(): got date " + date + " from " + fn)
+        else: print("verUseDesc(): can't get date from " + fn)
+    if (title): IN["title"] = title
+    if (date):  IN["date"] = date
+    else: IN["date"] = "1900-01-01"
+    if (url): IN["url"] = url
+    return IN
+
+# ----------------------------------------------------------------------------------------------------
+def verDescDB():
+    fn = getDescHead() + ".db.txt"
+    if (not Path(fn).exists()):
+        print("verDescDb(): {} does not exist - stop".format(fn))
+        return None
+    IN = getDescDb(fn)
+    if (not IN):
+        return None
+    needed = ["act", "actlist", "cat", "catlist", "created", "date", "title", "url", "useDesc"]
+    neededErr = []
+    for item in needed:
+        if (not item in IN):
+            neededErr = neededErr + [item]
+    if (neededErr):
+        print("verDescDb(): missing items in {}: {}".format(fn, str(neededErr)))
+        return None
+
+    IN = verUseDesc(IN)
+
+    err = []
+    try:
+        parse(IN["created"])
+    except:
+        err = ["created item is wrong"]
+    if (IN["date"]):
+        try:
+            parse(IN["date"])
+        except:
+            err =  err + ["wrong date"]
+    if (not IN["title"].strip()):
+        err = err + ["empty title"]
+    urlOk = IN["url"].strip()=="" or IN["url"]=="*" or True==validators.url(IN["url"])
+    if (not urlOk):
+        err = err + ["wrong url"]
+    if (err):
+        print("verDescDb(): issues with {}: {}".format(fn, str(err)))
+        return None
+
+    err = []
+    act = ""
+    for item in IN["actlist"]:
+        if (item[1]):
+           act = item[0]
+           break
+    if (not act):
+        err = err + ["act not set"]
+    IN["act"] = act
+
+    cat = ""
+    for item in IN["catlist"]:
+        if (item[1]):
+            cat = item[0]
+            if (cat.startswith("=>")): cat = cat[2:]
+            break
+    if (not cat):
+        err = err + ["cat not set"]
+    IN["cat"] = cat
+
+    fn = IN["useDesc"]
+    if (not Path(fn).exists() or not Path(fn).stat().st_size):
+        err = err + ["empty / no " + fn]
+
+    if (err):
+        print("verDescDb(): issue with {}: {}".format(fn, str(err)))
+        return None
+
+    qv = []
+    qv.append(["""
+       select cat, upd from properties_catinfo 
+              where lower(active)='y' and blog=%s
+              order by cat asc
+     """, getBlog()])
+
+    catlist = dbRun(DbOp.GETCATS, qv)
+    for i in range(len(catlist)):
+        if (cat in catlist[i][0]):
+            catlist[i][1] = "*"
+            break
+    IN["catlist"] = catlist
+
+    gettit = not IN["date"] or not IN["title"]
+    gettit = gettit and ".dscj" in IN["useDesc"]
+    res = None
+    if (gettit):
+         qv = ["""
+           select date, title from load 
+                  where abstractlower like '%s' and blog=%s
+                  order by cat asc
+         """, getDescHead(), blog]
+         res = dbRun(DbOp.GETTIT, qv)
+
+    return IN
+
+# ----------------------------------------------------------------------------------------------------
+# Get descriptor from the given file and return the dict if it is json
+def getDescDb(fn):
+    if (not Path(fn).exists()):
+        print("getDescDb(): {} does not exist".format(fn))
+        return {}
+
+    txt = False
+    try:
+        F = open(fn, "r", encoding='utf8')
+        # get descriptor
+        IN = F.read()
+        if (IN.startswith("<!") or ".text" in fn):
+            txt = True
+        else:
+            IN = json.loads(IN)
+        F.close()
+    except Exception as e:
+        print("getDescDb(): wrong %s - %s" % (fn, str(e)))
+        return {}
+
+    if (".db" in fn): return IN
+
+    if (not txt):
+        print("getDescDb(): %s is not for db" % fn)
+        return {}
+    return IN
+
+# ----------------------------------------------------------------------------------------------------
+def putDescDb(fn, out):
+    desc = json.dumps(out, indent=1, sort_keys=True)
+    desc = desc.replace("[\n   ", "[").replace(',\n   "', ', "').replace("\n  ]", "]")
+    try:
+        Path(fn).write_text(desc, encoding='utf8')
+    except Exception as e:
+        print("Failed putDescDb(): " + str(e))
+        return
+
+    print("putDescDb(): wrote " + fn)
+    return
+
+# ----------------------------------------------------------------------------------------------------------------
+@global_enum
+class DbOp(Enum):
+  GETTIT  = 0
+  GETCATS = 1
+  PUT     = 2
+  DEL     = 3
+
+# ----------------------------------------------------------------------------------------------------------------
+def dbRun(opcd, qv):
+    step = 0
+    try:
+        with connect(
+                user=dbCfg[0],
+                password=dbCfg[1],
+                host=dbCfg[2],
+                port=dbCfg[3],
+                database=dbCfg[4]
+        ) as conn:
+            step = 1
+            print("dbRun(): opcd={}".format(opcd))
+            if (opcd==DbOp.GETCATS):
+               with conn.cursor(buffered=True) as curs:
+                    curs.execute(qv[0][0], qv[0][1:])
+                    step = 10
+                    cres = curs.fetchall()
+                    res = []
+                    step = 11
+                    for curr in cres:
+                        cat = curr[0]
+                        upd = curr[1].lower()
+                        if (upd=='y'): cat = "=>" + cat
+                        res = res + [[cat, ""]]
+                    return res
+
+            if (opcd==DbOp.GETTIT):
+               with conn.cursor(buffered=True) as curs:
+                    curs.execute(qv[0][0], qv[0][1:])
+                    step = 100
+                    cres = curs.fetchone()
+                    step = 110
+                    if (not cres): return [cres[0], cres[1]]
+                    return []
+
+            if (opcd == DbOp.PUT or opcd == DbOp.DEL):
+                step = 12
+                nproc = 0
+                with conn.cursor(prepared=True) as curs:
+                    step = 13
+                    for currqv in qv:
+                        step = 14
+                        curs.execute(currqv[0], currqv[1])
+                        nproc = nproc + curs.rowcount
+                        print ("dbRun(): {} - records processed: {}".format(currqv[2], curs.rowcount))
+                step = 15
+                if (nproc):
+                    print("dbRun(): commit")
+                    conn.commit()
+                return None
+    except Error as e:
+           print("dbRun(): step={} err={}".format(step, e))
+           step = 2
+
+    print ("dbRun(): stop step={}".format(step))
+    return None
+
+# ----------------------------------------------------------------------------------------------------------------
 # create cr2 desciptor
 def crCr2Desc():
     L = glob.glob("./cr2/*.cr2")
@@ -1818,7 +2212,7 @@ def crCr2Desc():
     print("crCr2Desc(): cr2 files processed: " + str(ncr2))
     return desc
 
-# --------------------------------------------------------------------------------------
+# ----------------------------------------------------------------------------------------------------------------
 # Rename files in ./cr2 directory in accordance with current naming of *jpg files in the current dir.
 # -- Date Time Original dto is used to id images uniquely. So, there should be no dto duplicates in the current dir.
 #    In ./cr2, each cr2 file should have unique dto.
@@ -1941,8 +2335,10 @@ def mvCr2():
         except Exception as e:
             print(" mvCr2(): %s - wrong DateTimeOriginal=%s - %s" % (toF, toFExifT, str(e)))
         if (toFExifT): os.utime(fromF, (toFExifT, toFExifT))  # set mod,access times
-
-        shutil.move(fromF, toF)
+        if os.path.exists(toF):
+           os.remove(toF)
+        sleep(0.75)
+        os.rename(fromF, toF)
         nr += 1
         print("mvCr2(): %s===replace===>%s" % (fromF, toF))
     print("mvCr2(): replaced: %d moved: %d defective: %d" % (nr, nm, nd))
@@ -2133,12 +2529,15 @@ group.add_argument('-jp', action="store_true", help="Put comments from the given
 group.add_argument('-2ftp', action="store_true", help="Copy *.jpg images to proper ftp subdirectory")
 group.add_argument('-ftp2', action="store_true", help="Copy *.jpg images from proper ftp subdirectory")
 group.add_argument('-ftpd', action="store_true", help="Delete *.jpg images from proper ftp subdirectory")
+group.add_argument('-db', action="store_true", help="Work with MySql using *.db.txt")
+
 group.add_argument('-gpsn', action="store_true",
                    help="Create new descriptors *.gps.txt *.gps.htm from Android *.csv files")
 group.add_argument('-gpsu', action="store_true",
                    help="Update descriptors *.gps.txt, *.gps.htm, put *.gps.txt info to image files")
 group.add_argument('-gpsg', action="store_true", help="Create descriptors *.gps.txt, *.gps.htm from *.jpg")
 group.add_argument('-gpsgh', action="store_true", help="Create descriptor gps.htm from *.jpg")
+
 group.add_argument('-cr2', action="store_true", help="Rename images in ./cr2 if necessary")
 group.add_argument('-mvcr2', action="store_true", help="./cr2/*.jpg => ./*.jpg")
 group.add_argument('-mvtsa', action="store_true", help="Rename *.jpg in ./tsa")
@@ -2195,7 +2594,7 @@ else:
     List = [el for el in List if (el.lower().endswith(".jpg"))]  # use only jpg files
     List.sort()
 
-if (len(List) == 0 and not jproc and not jnewtext and not args["ftp2"]):
+if (len(List) == 0 and not jproc and not jnewtext and not args["ftp2"] and not args["db"]):
     print("picman: No images to process")
     # print (help)
     exit(0)
@@ -2223,6 +2622,11 @@ if (args["2ftp"]):
 # ----------------------------------------------------------------------------------------------------------
 if (args["ftp2"] or args["ftpd"]):
     fromFtp(desc + ".dscj.txt", args["ftpd"])
+    print("picman: stop")
+    exit(0)
+# ----------------------------------------------------------------------------------------------------------
+if (args["db"]):
+    procDescDb()
     print("picman: stop")
     exit(0)
 # ----------------------------------------------------------------------------------------------------------
