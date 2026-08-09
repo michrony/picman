@@ -1,15 +1,17 @@
-OS:             Win10
+OS:             Win11
 <br>
 Utilities used: http://www.sentex.net/~mwandel/jhead/
 <pre>
-usage: picman.py [-h]
-                 (-mv | -mvc | -mvt | -mvd | -T | -tS | -ts TS | -jn | -jnb | -ju | -jue | -jun | -jp | -2ftp | -ftp2 | -ftpd | -gpsn | -gpsu | -gpsg | -gpsgh | -cr2 | -mvcr2 | -mvtsa)
-                 [-ex] [-pi] [-pv] [-tbg TBG]
+picman -h
+picman: start version: 08/09/2026 with Python: 3.14.5 at: g:/wbmov/_ampsycho.00
+usage: picman.py [-h] (-mv | -mvc | -mvt | -mvd | -T | -tS | -ts TS | -jn | -jnb | -ju | -jue | -jun | -jp | -2ftp |
+                 -ftp2 | -ftpd | -db | -gpsn | -gpsu | -gpsg | -gpsgh | -cr2 | -mvcr2 | -mvtsa) [-ex] [-pi] [-pv]
+                 [-tbg TBG]
 
-Notes: (1) *.dscj.txt should be always present in curr dir. It is used for jpg
-renaming and keeps JSON descriptor. If IPTC is empty, jpg comment is used.
+Notes: (1) *.dscj.txt should be always present in curr dir. It is used for jpg renaming and keeps JSON descriptor. If
+IPTC is empty, jpg comment is used.
 
-options:  
+options:
   -h, --help  show this help message and exit
   -mv         Rename *.jpg files to prefix.nnn.ext
   -mvc        Rename *.jpg files to lower case, replace non-alphanum characters by dots
@@ -39,4 +41,4 @@ options:
   -pi         Use Picasa-generated index
   -pv         Preview version of *.gps.txt, iptcs not used
   -tbg TBG    Background color code for thumbs. Default is #c0c0c0
-  </pre>
+</pre>
